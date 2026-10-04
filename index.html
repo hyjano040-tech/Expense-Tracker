@@ -222,10 +222,13 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="transactionDate"><i class="fa-regular fa-calendar"></i> Date</label>
-          <div class="input-wrapper">
-            <input type="date" id="transactionDate">
+        <div class="form-group form-group-date">
+          <label for="transactionDate"><i class="fa-regular fa-calendar-days"></i> Transaction Date</label>
+          <div class="input-wrapper input-date-wrapper" onclick="openDatePicker('transactionDate')">
+            <input type="date" id="transactionDate" title="Choose transaction date">
+            <button type="button" class="btn-today-pill" onclick="event.stopPropagation(); setTodayDate();" title="Set to Today">
+              <i class="fa-solid fa-clock-rotate-left"></i> Today
+            </button>
           </div>
         </div>
       </div>

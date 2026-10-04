@@ -431,6 +431,7 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="number"],
+input[type="date"],
 select {
   width: 100%;
   font-family: var(--font-sans);
@@ -452,6 +453,70 @@ input:focus,
 select:focus {
   border-color: var(--brand-primary);
   box-shadow: 0 0 0 3.5px var(--border-focus);
+}
+
+/* Modern Transaction Date Picker */
+.input-date-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.input-date-wrapper input[type="date"] {
+  cursor: pointer;
+  padding-right: 76px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.input-date-wrapper:hover input[type="date"] {
+  border-color: var(--brand-primary);
+  background: var(--bg-card-hover);
+}
+
+.input-date-wrapper input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  margin-right: 4px;
+}
+
+.input-date-wrapper input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  transform: scale(1.15);
+  background: rgba(99, 102, 241, 0.25);
+}
+
+[data-theme="dark"] .input-date-wrapper input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
+/* Quick Today Pill Button inside Date input */
+.btn-today-pill {
+  position: absolute;
+  right: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--bg-tag);
+  border: 1px solid var(--border-color);
+  color: var(--brand-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all var(--trans-fast);
+  line-height: 1;
+}
+
+.btn-today-pill:hover {
+  background: var(--brand-primary);
+  color: #ffffff;
+  border-color: var(--brand-primary);
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
 }
 
 .btn-toggle-pwd {

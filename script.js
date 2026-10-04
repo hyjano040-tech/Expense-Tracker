@@ -156,6 +156,31 @@ function initMonthPickers() {
   }
 }
 
+// Reset Transaction Date to Today
+function setTodayDate() {
+  const txDate = document.getElementById('transactionDate');
+  if (txDate) {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    txDate.value = `${yyyy}-${mm}-${dd}`;
+    showToast("Date set to Today", "info");
+  }
+}
+
+// Open native date picker popup when clicking anywhere in wrapper
+function openDatePicker(id) {
+  const el = document.getElementById(id);
+  if (el && typeof el.showPicker === 'function') {
+    try {
+      el.showPicker();
+    } catch (e) {
+      el.focus();
+    }
+  }
+}
+
 // Triggered when user selects a month from the date input
 function onMonthPickerChange() {
   const picker = document.getElementById('monthPicker');
@@ -511,6 +536,7 @@ async function addTransaction() {
 
     document.getElementById('title').value = '';
     document.getElementById('amount').value = '';
+    setTodayDate();
     
     const notice = document.getElementById('permanentNotice');
     if (notice) notice.style.display = 'none';
