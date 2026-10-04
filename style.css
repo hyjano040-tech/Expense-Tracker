@@ -299,18 +299,25 @@ body {
 }
 
 .brand-logo {
-  width: 60px;
-  height: 60px;
-  border-radius: 18px;
-  background: var(--brand-gradient);
-  color: #ffffff;
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.6rem;
   margin: 0 auto 16px;
-  box-shadow: 0 10px 25px rgba(99, 102, 241, 0.35);
-  animation: pulseGlow 3s infinite alternate;
+  box-shadow: 0 12px 30px rgba(99, 102, 241, 0.45);
+  animation: pulseGlow 3.5s infinite alternate;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 20px;
+  display: block;
 }
 
 @keyframes pulseGlow {
@@ -666,13 +673,21 @@ button {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: var(--brand-gradient);
-  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
   box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+}
+
+.brand-logo-img-small {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
 }
 
 .brand-identity h2 {
