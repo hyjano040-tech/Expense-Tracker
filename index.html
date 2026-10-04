@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Expense & Income Tracker</title>
+  
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  
+  <!-- Custom Modern CSS -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Firebase SDKs (v10 Compat Mode) -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+  <!-- Ambient Background Glows -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Global Theme Toggle (Floating Top Right) -->
+  <div class="top-nav-controls">
+    <button id="themeToggleBtn" class="btn-icon" onclick="toggleTheme()" title="Switch Theme">
+      <i class="fa-solid fa-moon" id="themeIcon"></i>
+    </button>
+  </div>
+
+  <!-- 1. LOGIN / SIGNUP SCREEN -->
+  <div id="authSection" class="container auth-card">
+    <div class="brand-header">
+      <div class="brand-logo">
+        <i class="fa-solid fa-wallet"></i>
+      </div>
+      <h2>SmartFlow</h2>
+      <p class="brand-subtitle">Smart Income & Expense Management</p>
+    </div>
+
+    <!-- Auth Mode Switcher Tabs -->
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">
+        <i class="fa-solid fa-right-to-bracket"></i> Login
+      </button>
+      <button type="button" class="auth-tab" id="tabSignup" onclick="switchAuthTab('signup')">
+        <i class="fa-solid fa-user-plus"></i> Create Account
+      </button>
+    </div>
+    
+    <h3 id="authTitle" class="form-section-title">Welcome Back</h3>
+    
+    <form onsubmit="event.preventDefault();" class="auth-form">
+      <div class="form-group">
+        <label for="authEmail"><i class="fa-regular fa-envelope"></i> Email Address</label>
+        <div class="input-wrapper">
+          <input type="email" id="authEmail" placeholder="name@example.com" required autocomplete="email">
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label for="authPassword"><i class="fa-solid fa-lock"></i> Password</label>
+        <div class="input-wrapper">
+          <input type="password" id="authPassword" placeholder="Minimum 6 characters" required autocomplete="current-password">
+          <button type="button" class="btn-toggle-pwd" onclick="togglePasswordVisibility('authPassword', this)" title="Show/Hide Password">
+            <i class="fa-regular fa-eye"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="auth-actions">
+        <button type="button" id="loginBtn" class="btn-primary" onclick="handleLogin()">
+          <span>Log In</span> <i class="fa-solid fa-arrow-right"></i>
+        </button>
+        <button type="button" id="signupBtn" class="btn-secondary" onclick="handleSignup()" style="display: none;">
+          <span>Create Account</span> <i class="fa-solid fa-user-check"></i>
+        </button>
+      </div>
+    </form>
+    
+    <div class="auth-footer">
+      <p id="authSwitchPrompt">Don't have an account? <a href="javascript:void(0)" onclick="switchAuthTab('signup')">Sign up</a></p>
+    </div>
+  </div>
+
+  <!-- 2. MAIN TRACKER APP SCREEN (Login hone ke baad dikhegi) -->
+  <div id="appSection" class="container app-card" style="display: none;">
+    
+    <!-- Top Header Bar -->
+    <header class="header-bar">
+      <div class="brand-identity">
+        <div class="brand-logo-small">
+          <i class="fa-solid fa-chart-pie"></i>
+        </div>
+        <div>
+          <h2>SmartFlow Tracker</h2>
+          <span class="header-subtitle">Real-time Cloud Sync</span>
+        </div>
+      </div>
+      
+      <div class="user-meta-bar">
+        <div class="user-badge">
+          <div class="user-avatar" id="userAvatar">U</div>
+          <span id="userEmailTag">user@example.com</span>
+        </div>
+        <button onclick="handleLogout()" class="btn-logout" title="Sign Out">
+          <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          <span>Logout</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Month Selection & Filter Navigation Bar -->
+    <div class="month-selector-bar">
+      <div class="month-nav">
+        <button type="button" class="btn-month-nav" onclick="changeMonth(-1)" title="Previous Month">
+          <i class="fa-solid fa-chevron-left"></i>
+        </button>
+        <div class="month-display-wrap">
+          <i class="fa-regular fa-calendar-days"></i>
+          <input type="month" id="monthPicker" onchange="onMonthPickerChange()" title="Pick Month">
+        </div>
+        <button type="button" class="btn-month-nav" onclick="changeMonth(1)" title="Next Month">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+
+      <div class="month-quick-pills">
+        <button type="button" class="pill-btn active" id="btnThisMonth" onclick="selectQuickMonth('current')">
+          <i class="fa-solid fa-calendar-day"></i> This Month
+        </button>
+        <button type="button" class="pill-btn" id="btnAllMonths" onclick="selectQuickMonth('all')">
+          <i class="fa-solid fa-layer-group"></i> All Time
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Balance Summary Cards -->
+    <section class="summary-section">
+      <div class="summary-box">
+        
+        <!-- Total Income Card -->
+        <div class="card income-bg">
+          <div class="card-icon-wrapper">
+            <i class="fa-solid fa-arrow-trend-up"></i>
+          </div>
+          <div class="card-content">
+            <p>Total Income</p>
+            <h3 id="totalIncome">Rs. 0</h3>
+            <span class="card-hint"><i class="fa-solid fa-circle-check"></i> Inflow</span>
+          </div>
+        </div>
+
+        <!-- Total Expense Card -->
+        <div class="card expense-bg">
+          <div class="card-icon-wrapper">
+            <i class="fa-solid fa-arrow-trend-down"></i>
+          </div>
+          <div class="card-content">
+            <p>Total Expense</p>
+            <h3 id="totalExpense">Rs. 0</h3>
+            <span class="card-hint"><i class="fa-solid fa-receipt"></i> Outflow</span>
+          </div>
+        </div>
+
+        <!-- Net Balance Card -->
+        <div class="card balance-bg">
+          <div class="card-icon-wrapper">
+            <i class="fa-solid fa-wallet"></i>
+          </div>
+          <div class="card-content">
+            <p>Net Balance</p>
+            <h3 id="netBalance">Rs. 0</h3>
+            <span class="card-hint" id="balanceStatusHint"><i class="fa-solid fa-shield-halved"></i> Available</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- New Transaction Form Container -->
+    <section class="form-container">
+      <div class="section-title-wrap">
+        <div class="section-badge"><i class="fa-solid fa-plus"></i></div>
+        <h3>Add New Transaction</h3>
+      </div>
+      
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="title"><i class="fa-solid fa-pen-fancy"></i> Title / Source</label>
+          <div class="input-wrapper">
+            <input type="text" id="title" placeholder="e.g. Monthly Salary, House Rent, Utilities" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="amount"><i class="fa-solid fa-money-bill-wave"></i> Amount (PKR)</label>
+          <div class="input-wrapper input-currency">
+            <span class="currency-symbol">Rs.</span>
+            <input type="number" id="amount" placeholder="0" min="1" step="any" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="type"><i class="fa-solid fa-tags"></i> Transaction Category</label>
+          <div class="input-wrapper select-wrapper">
+            <select id="type" onchange="handleTypeChange()">
+              <option value="IN">💚 Income (Money IN)</option>
+              <option value="OUT">💔 Expense (Money OUT - Normal)</option>
+              <option value="PERMANENT">🔒 Permanent / Fixed Expense (Auto Monthly)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="transactionDate"><i class="fa-regular fa-calendar"></i> Date</label>
+          <div class="input-wrapper">
+            <input type="date" id="transactionDate">
+          </div>
+        </div>
+      </div>
+
+      <!-- Auto Monthly Notice Alert -->
+      <div id="permanentNotice" class="permanent-notice" style="display: none;">
+        <i class="fa-solid fa-arrows-rotate fa-spin"></i>
+        <span><strong>Automatic Monthly Outflow:</strong> Yeh entry save hone ke baad har naye month ke start mein automatically aapki history mein add ho jayegi.</span>
+      </div>
+
+      <div class="form-actions">
+        <button id="addTransactionBtn" onclick="addTransaction()" class="btn-primary btn-submit">
+          <i class="fa-solid fa-circle-plus"></i>
+          <span>Record Transaction</span>
+        </button>
+        <button type="button" class="btn-secondary-sm" onclick="toggleRecurringModal()" title="View & Manage Active Fixed Monthly Expenses">
+          <i class="fa-solid fa-repeat"></i>
+          <span>Fixed Outflow Rules (<strong id="recurringCount">0</strong>)</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Recurring Fixed Expenses Modal -->
+    <div id="recurringModal" class="modal-backdrop" style="display: none;" onclick="if(event.target === this) toggleRecurringModal()">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title">
+            <div class="modal-icon-badge"><i class="fa-solid fa-repeat"></i></div>
+            <div>
+              <h3>Monthly Fixed Expenses</h3>
+              <p class="modal-subtitle">Auto-deducted at the start of every month</p>
+            </div>
+          </div>
+          <button class="btn-close-modal" onclick="toggleRecurringModal()" title="Close">&times;</button>
+        </div>
+        
+        <div id="recurringList" class="recurring-list">
+          <!-- Dynamic recurring rules list will appear here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Transaction History Section -->
+    <section class="history-section">
+      <div class="history-header">
+        <div class="section-title-wrap">
+          <div class="section-badge"><i class="fa-solid fa-clock-rotate-left"></i></div>
+          <h3>Transaction History</h3>
+        </div>
+        
+        <!-- Live Search and Filter Controls -->
+        <div class="table-filters">
+          <div class="filter-search-box">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="searchFilter" placeholder="Search by title..." oninput="filterTransactions()">
+          </div>
+          <div class="filter-select-box">
+            <select id="typeFilter" onchange="filterTransactions()">
+              <option value="ALL">All Types</option>
+              <option value="IN">Income Only</option>
+              <option value="OUT">Expense Only</option>
+              <option value="PERMANENT">Permanent Only</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Transaction History Table -->
+      <div class="table-responsive">
+        <table id="transactionsMainTable">
+          <thead>
+            <tr>
+              <th>Date & Time</th>
+              <th>Title / Description</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th style="text-align: center;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="historyTable">
+            <!-- Firebase se data load hoke yahan aayega -->
+          </tbody>
+        </table>
+
+        <!-- Modern Empty State Placeholder -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+          <div class="empty-icon">
+            <i class="fa-solid fa-receipt"></i>
+          </div>
+          <h4>No Transactions Found</h4>
+          <p>Start recording your financial flow using the form above.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
