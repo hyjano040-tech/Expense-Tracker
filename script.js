@@ -267,17 +267,42 @@ function getTransactionMonthKey(item) {
 }
 
 // ==========================================================================
-// Helper: Extract Numeric Timestamp for Precise Sorting (Date & Time)
+// Robust Date & Time Parser for Exact Sorting (Handles legacy string dates)
 // ==========================================================================
 function getNumericTimestamp(item) {
-  if (item.sortTimestamp) return item.sortTimestamp;
+  // 1. Numeric timestamp
+  if (item.sortTimestamp && typeof item.sortTimestamp === 'number') {
+    return item.sortTimestamp;
+  }
+
+  // 2. Firestore Timestamp
   if (item.createdAt && typeof item.createdAt.toMillis === 'function') {
     return item.createdAt.toMillis();
   }
+
+  // 3. String Timestamp Parsing (e.g., "06 Oct 2026, 23:22")
   if (item.timestamp) {
-    const parsed = Date.parse(item.timestamp);
-    if (!isNaN(parsed)) return parsed;
+    try {
+      let cleanStr = item.timestamp.replace(',', '');
+      let parsedDate = new Date(cleanStr);
+
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.getTime();
+      }
+    } catch (e) {
+      console.error("Date parse error:", e);
+    }
   }
+
+  // 4. Fallback for date/time properties
+  if (item.date) {
+    let dateTimeStr = item.time ? `${item.date}T${item.time}` : `${item.date}T00:00:00`;
+    let parsedDate = new Date(dateTimeStr);
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate.getTime();
+    }
+  }
+
   return 0;
 }
 
@@ -395,317 +420,3 @@ async function checkAndApplyRecurringExpenses(userId) {
           await db.collection('users').doc(userId).collection('transactions').add({
             title: rule.title,
             amount: rule.amount,
-            type: 'PERMANENT',
-            timestamp: timestamp,
-            sortTimestamp: Date.now(),
-            monthKey: currentMonthKey,
-            recurringRuleId: doc.id,
-            isAutoMonthly: true,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-
-          autoAddedCount++;
-        }
-
-        await doc.ref.update({
-          lastAppliedMonth: currentMonthKey,
-          lastAppliedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-      }
-    }
-
-    if (autoAddedCount > 0) {
-      showToast(`⚡ ${autoAddedCount} fixed monthly expense(s) auto-recorded for ${monthName}!`, 'info');
-    }
-  } catch (err) {
-    console.error("Error checking recurring expenses:", err);
-  }
-}
-
-function listenToRecurringRules(userId) {
-  db.collection('users').doc(userId).collection('recurring_rules')
-    .orderBy('createdAt', 'desc')
-    .onSnapshot(snapshot => {
-      activeRecurringRules = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        data.id = doc.id;
-        activeRecurringRules.push(data);
-      });
-
-      const countBadge = document.getElementById('recurringCount');
-      if (countBadge) {
-        countBadge.innerText = activeRecurringRules.length;
-      }
-
-      renderRecurringList();
-    });
-}
-
-function toggleRecurringModal() {
-  const modal = document.getElementById('recurringModal');
-  if (!modal) return;
-  const isVisible = modal.style.display === 'flex';
-  modal.style.display = isVisible ? 'none' : 'flex';
-  if (!isVisible) {
-    renderRecurringList();
-  }
-}
-
-function renderRecurringList() {
-  const list = document.getElementById('recurringList');
-  if (!list) return;
-
-  if (activeRecurringRules.length === 0) {
-    list.innerHTML = `
-      <div style="text-align: center; padding: 30px 10px; color: var(--text-muted);">
-        <i class="fa-solid fa-calendar-xmark" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
-        <p>No monthly fixed rules active yet.</p>
-        <span style="font-size: 0.8rem;">Select <strong>"Permanent / Fixed Expense"</strong> in the form to set an auto-repeating outflow.</span>
-      </div>
-    `;
-    return;
-  }
-
-  list.innerHTML = activeRecurringRules.map(rule => `
-    <div class="recurring-item">
-      <div class="recurring-item-info">
-        <strong>${escapeHtml(rule.title)}</strong>
-        <span><i class="fa-solid fa-arrows-rotate"></i> Auto-deducts monthly • Last applied: ${rule.lastAppliedMonth || 'Active'}</span>
-      </div>
-      <div class="recurring-actions">
-        <span class="recurring-item-amount">- Rs. ${(rule.amount || 0).toLocaleString()}</span>
-        <button class="btn-delete-rule" onclick="deleteRecurringRule('${rule.id}')" title="Stop Auto-Monthly Deduction">
-          <i class="fa-solid fa-trash-can"></i>
-        </button>
-      </div>
-    </div>
-  `).join('');
-}
-
-function deleteRecurringRule(ruleId) {
-  if (confirm("Are you sure you want to stop this monthly fixed deduction? Future months will not auto-deduct this amount.")) {
-    db.collection('users').doc(currentUser.uid).collection('recurring_rules').doc(ruleId).delete()
-      .then(() => {
-        showToast("Fixed monthly rule removed.", "info");
-      })
-      .catch(err => {
-        showToast("Error: " + err.message, "error");
-      });
-  }
-}
-
-// ==========================================================================
-// Transaction Operations: Add, Load, Filter, Delete
-// ==========================================================================
-async function addTransaction() {
-  const title = document.getElementById('title').value.trim();
-  const amount = parseFloat(document.getElementById('amount').value);
-  const type = document.getElementById('type').value;
-  const dateInput = document.getElementById('transactionDate')?.value;
-
-  if (!title || isNaN(amount) || amount <= 0) {
-    showToast("Please enter a valid title and positive amount!", "error");
-    return;
-  }
-
-  const addBtn = document.getElementById('addTransactionBtn');
-  if (addBtn) addBtn.disabled = true;
-
-  // Selected date aur exact current time combine karna
-  const now = new Date();
-  let txDate = new Date();
-
-  if (dateInput) {
-    const [y, m, d] = dateInput.split('-').map(Number);
-    // User ki picked date ke sath current live Time attach kiya taake sorting exact time wise ho
-    txDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
-  }
-
-  const dateStr = txDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const timeStr = txDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const timestamp = `${dateStr}, ${timeStr}`;
-  const monthKey = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
-  const sortTimestamp = txDate.getTime(); // Exact Date & Time milliseconds
-
-  try {
-    let recurringRuleId = null;
-
-    if (type === 'PERMANENT') {
-      const ruleRef = await db.collection('users').doc(currentUser.uid).collection('recurring_rules').add({
-        title: title,
-        amount: amount,
-        lastAppliedMonth: monthKey,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      recurringRuleId = ruleRef.id;
-    }
-
-    await db.collection('users').doc(currentUser.uid).collection('transactions').add({
-      title: title,
-      amount: amount,
-      type: type,
-      timestamp: timestamp,
-      sortTimestamp: sortTimestamp, // Explicit timestamp for sorting
-      monthKey: monthKey,
-      recurringRuleId: recurringRuleId,
-      isAutoMonthly: type === 'PERMANENT',
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    document.getElementById('title').value = '';
-    document.getElementById('amount').value = '';
-    setTodayDate();
-    
-    const notice = document.getElementById('permanentNotice');
-    if (notice) notice.style.display = 'none';
-
-    // If active month filter is different from transaction month, sync
-    if (activeMonthKey !== 'ALL' && activeMonthKey !== monthKey) {
-      activeMonthKey = monthKey;
-      const picker = document.getElementById('monthPicker');
-      if (picker) picker.value = monthKey;
-      updateQuickPillState();
-    }
-
-    if (type === 'PERMANENT') {
-      showToast("Fixed expense saved & set to auto-repeat every month!", "success");
-    } else {
-      showToast("Transaction recorded successfully!", "success");
-    }
-  } catch (err) {
-    showToast("Data Save Error: " + err.message, "error");
-  } finally {
-    if (addBtn) addBtn.disabled = false;
-  }
-}
-
-// Real-time Firestore Listener
-function loadUserTransactions() {
-  db.collection('users').doc(currentUser.uid).collection('transactions')
-    .onSnapshot(snapshot => {
-      currentTransactions = [];
-
-      snapshot.forEach(doc => {
-        const item = doc.data();
-        item.id = doc.id;
-        item.computedMonthKey = getTransactionMonthKey(item);
-        currentTransactions.push(item);
-      });
-
-      // Master client-side sort by Date & Time (Newest First)
-      currentTransactions.sort((a, b) => getNumericTimestamp(b) - getNumericTimestamp(a));
-
-      // Update summary statistics and table rows
-      updateDashboardView();
-    }, error => {
-      showToast("Error loading records: " + error.message, "error");
-    });
-}
-
-// Master view update: recalculates metrics & filters rows according to active month
-function updateDashboardView() {
-  // 1. Filter transactions by selected Month
-  const monthFiltered = currentTransactions.filter(item => {
-    if (activeMonthKey === 'ALL') return true;
-    return (item.computedMonthKey || item.monthKey) === activeMonthKey;
-  });
-
-  // 2. Compute Summary Totals for the active month
-  let totalIncome = 0;
-  let totalExpense = 0;
-
-  monthFiltered.forEach(item => {
-    if (item.type === 'IN') {
-      totalIncome += (item.amount || 0);
-    } else {
-      totalExpense += (item.amount || 0);
-    }
-  });
-
-  const net = totalIncome - totalExpense;
-
-  // 3. Update Stat Card UI
-  document.getElementById('totalIncome').innerText = 'Rs. ' + totalIncome.toLocaleString();
-  document.getElementById('totalExpense').innerText = 'Rs. ' + totalExpense.toLocaleString();
-  document.getElementById('netBalance').innerText = 'Rs. ' + net.toLocaleString();
-
-  const balanceHint = document.getElementById('balanceStatusHint');
-  if (balanceHint) {
-    const monthTag = activeMonthKey === 'ALL' ? 'Overall' : formatMonthLabel(activeMonthKey);
-    if (net >= 0) {
-      balanceHint.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${monthTag}: Healthy`;
-    } else {
-      balanceHint.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${monthTag}: Deficit`;
-    }
-  }
-
-  // 4. Render Table with search and type filter
-  renderTransactionsTable(monthFiltered);
-}
-
-function filterTransactions() {
-  updateDashboardView();
-}
-
-function renderTransactionsTable(sourceTransactions) {
-  const listToRender = sourceTransactions || currentTransactions.filter(item => {
-    if (activeMonthKey === 'ALL') return true;
-    return (item.computedMonthKey || item.monthKey) === activeMonthKey;
-  });
-
-  const table = document.getElementById('historyTable');
-  const emptyState = document.getElementById('emptyState');
-  const tableWrapper = document.getElementById('transactionsMainTable');
-  const searchQuery = (document.getElementById('searchFilter')?.value || '').toLowerCase().trim();
-  const typeFilter = document.getElementById('typeFilter')?.value || 'ALL';
-
-  table.innerHTML = '';
-
-  let filtered = listToRender.filter(item => {
-    const matchesSearch = !searchQuery || (item.title && item.title.toLowerCase().includes(searchQuery));
-    const matchesType = typeFilter === 'ALL' || item.type === typeFilter;
-    return matchesSearch && matchesType;
-  });
-
-  // Final Strict Sort: Latest Date & Time First
-  filtered.sort((a, b) => getNumericTimestamp(b) - getNumericTimestamp(a));
-
-  if (filtered.length === 0) {
-    if (emptyState) {
-      emptyState.style.display = 'block';
-      const emptyP = emptyState.querySelector('p');
-      if (emptyP) {
-        if (activeMonthKey === 'ALL') {
-          emptyP.innerText = "No transactions found across all time.";
-        } else {
-          emptyP.innerText = `No transactions recorded for ${formatMonthLabel(activeMonthKey)}.`;
-        }
-      }
-    }
-    if (tableWrapper) tableWrapper.style.display = 'none';
-    return;
-  }
-
-  if (emptyState) emptyState.style.display = 'none';
-  if (tableWrapper) tableWrapper.style.display = 'table';
-
-  filtered.forEach(item => {
-    let typeTag = '';
-    let amountClass = 'td-amount-out';
-    let amountPrefix = '- ';
-
-    if (item.type === 'IN') {
-      typeTag = '<span class="tag-income"><i class="fa-solid fa-arrow-down-left"></i> IN</span>';
-      amountClass = 'td-amount-in';
-      amountPrefix = '+ ';
-    } else if (item.type === 'OUT') {
-      typeTag = '<span class="tag-expense"><i class="fa-solid fa-arrow-up-right"></i> OUT</span>';
-    } else {
-      typeTag = '<span class="tag-expense"><i class="fa-solid fa-arrow-up-right"></i> OUT</span> <span class="tag-perm"><i class="fa-solid fa-lock"></i> Fixed</span>';
-      if (item.isAutoMonthly) {
-        typeTag += ' <span class="badge-auto" title="Auto-deducted every month"><i class="fa-solid fa-arrows-rotate"></i> Monthly Auto</span>';
-      }
-    }
-
-    const row = table.insertRow();
