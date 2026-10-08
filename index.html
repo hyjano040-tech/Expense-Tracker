@@ -24,8 +24,15 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  
+  <!-- SheetJS Library for Modern Excel (.xlsx) Export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
+
+  <!-- Custom Modern Interactive Cursor -->
+  <div id="customCursorDot" class="custom-cursor-dot"></div>
+  <div id="customCursorRing" class="custom-cursor-ring"></div>
 
   <!-- Ambient Background Glows -->
   <div class="ambient-glow glow-1"></div>
@@ -192,6 +199,117 @@
       </div>
     </section>
 
+    <!-- Smart Financial Health & Month-End Savings Advisor -->
+    <section class="advisor-card" id="advisorSection">
+      <div class="advisor-header">
+        <div class="advisor-title-wrap">
+          <div class="advisor-icon-badge">
+            <i class="fa-solid fa-brain"></i>
+          </div>
+          <div>
+            <div class="advisor-badge-row">
+              <h3>Smart Savings Advisor</h3>
+              <span class="advisor-pill" id="advisorHealthPill"><i class="fa-solid fa-shield-halved"></i> Analyzing...</span>
+            </div>
+            <p class="advisor-subtitle" id="advisorPeriodSubtitle">Personalized month-end budget & savings guidance</p>
+          </div>
+        </div>
+
+        <div class="advisor-actions">
+          <button type="button" class="btn-advisor-toggle" onclick="toggleAdvisorDetails()" id="btnToggleAdvisor">
+            <span>Savings Advice</span>
+            <i class="fa-solid fa-chevron-down" id="advisorToggleIcon"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Bar (Always Visible) -->
+      <div class="advisor-quick-metrics">
+        <div class="quick-metric-item">
+          <span class="qm-label"><i class="fa-solid fa-piggy-bank"></i> Savings Rate</span>
+          <strong class="qm-value" id="qmSavingsRate">0%</strong>
+          <span class="qm-hint" id="qmSavingsHint">Target: 20%+</span>
+        </div>
+        <div class="quick-metric-item">
+          <span class="qm-label"><i class="fa-solid fa-fire-flame-curved"></i> Expense Burn Rate</span>
+          <strong class="qm-value" id="qmBurnRate">0%</strong>
+          <span class="qm-hint" id="qmBurnHint">of Income spent</span>
+        </div>
+        <div class="quick-metric-item">
+          <span class="qm-label"><i class="fa-solid fa-calendar-day"></i> Suggested Daily Cap</span>
+          <strong class="qm-value" id="qmDailyCap">Rs. 0</strong>
+          <span class="qm-hint">to maintain savings</span>
+        </div>
+        <div class="quick-metric-item">
+          <span class="qm-label"><i class="fa-solid fa-heart-pulse"></i> Financial Health</span>
+          <strong class="qm-value" id="qmHealthScore">-- / 100</strong>
+          <span class="qm-hint" id="qmHealthStatus">Evaluating</span>
+        </div>
+      </div>
+
+      <!-- Detailed Advice Body (Expandable) -->
+      <div class="advisor-expanded-content" id="advisorExpandedContent" style="display: none;">
+        <!-- Dynamic Alert Banner -->
+        <div class="advisor-status-banner" id="advisorStatusBanner">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="advisor-grid">
+          <!-- 50/30/20 Ideal Budget Breakdown for This Income -->
+          <div class="advisor-box budget-rule-box">
+            <div class="box-head">
+              <i class="fa-solid fa-scale-balanced"></i>
+              <h4>The 50 / 30 / 20 Budget Guide</h4>
+            </div>
+            <p class="box-desc">Based on your active income (<span id="guideIncomeDisplay">Rs. 0</span>), here is how your money should ideally be distributed:</p>
+            <div class="budget-bars">
+              <div class="b-bar-item">
+                <div class="b-bar-label">
+                  <span>🏠 Needs (50% max)</span>
+                  <strong id="guideNeedsVal">Rs. 0</strong>
+                </div>
+                <div class="b-progress-track">
+                  <div class="b-progress-fill fill-needs" id="barNeeds" style="width: 50%;"></div>
+                </div>
+                <span class="b-bar-sub">Essentials, food, rent, utility bills</span>
+              </div>
+              <div class="b-bar-item">
+                <div class="b-bar-label">
+                  <span>🍿 Wants / Lifestyle (30% max)</span>
+                  <strong id="guideWantsVal">Rs. 0</strong>
+                </div>
+                <div class="b-progress-track">
+                  <div class="b-progress-fill fill-wants" id="barWants" style="width: 30%;"></div>
+                </div>
+                <span class="b-bar-sub">Dining out, shopping, discretionary</span>
+              </div>
+              <div class="b-bar-item">
+                <div class="b-bar-label">
+                  <span>💎 Savings & Buffer (20% min)</span>
+                  <strong id="guideSavingsVal">Rs. 0</strong>
+                </div>
+                <div class="b-progress-track">
+                  <div class="b-progress-fill fill-savings" id="barSavings" style="width: 20%;"></div>
+                </div>
+                <span class="b-bar-sub">Emergency fund & future investments</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actionable Money-Saving Strategies -->
+          <div class="advisor-box actionable-tips-box">
+            <div class="box-head">
+              <i class="fa-solid fa-lightbulb"></i>
+              <h4>Actionable Steps to Save Money</h4>
+            </div>
+            <div class="tips-list" id="advisorTipsList">
+              <!-- Dynamically populated tips -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- New Transaction Form Container -->
     <section class="form-container">
       <div class="section-title-wrap">
@@ -297,6 +415,10 @@
               <option value="PERMANENT">Permanent Only</option>
             </select>
           </div>
+          <button type="button" class="btn-export-excel" onclick="exportTransactionsToExcel()" title="Download Modernized Excel Spreadsheet (.xlsx)">
+            <i class="fa-solid fa-file-excel"></i>
+            <span>Export Excel</span>
+          </button>
         </div>
       </div>
 
@@ -305,7 +427,12 @@
         <table id="transactionsMainTable">
           <thead>
             <tr>
-              <th>Date & Time</th>
+              <th class="th-sortable" onclick="toggleDateSort()" title="Click to toggle sorting (Newest / Oldest first)">
+                <div class="th-sort-wrap">
+                  <span>Date & Time</span>
+                  <i id="sortDirectionIcon" class="fa-solid fa-arrow-down-wide-short"></i>
+                </div>
+              </th>
               <th>Title / Description</th>
               <th>Type</th>
               <th>Amount</th>

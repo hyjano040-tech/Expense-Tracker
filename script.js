@@ -19,6 +19,7 @@ let currentUser = null;
 let currentTransactions = []; // Cached transactions for client-side search & filtering
 let activeRecurringRules = []; // Cached recurring rules
 let activeMonthKey = getCurrentMonthKey(); // e.g. "2026-10" or "ALL"
+let currentSortDirection = 'desc'; // 'desc' = Newest date & time first, 'asc' = Oldest first
 
 // ==========================================================================
 // Theme Management (Dark / Light)
@@ -247,21 +248,173 @@ function formatMonthLabel(monthKey) {
   return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
 }
 
+// Helper: Robust parser to extract epoch milliseconds for any transaction
+function getTransactionDateMillis(item) {
+  if (!item) return 0;
+
+  // 1. Direct timestampMillis if saved
+  if (typeof item.timestampMillis === 'number' && !isNaN(item.timestampMillis)) {
+    return item.timestampMillis;
+  }
+
+  // 2. ISO or parsable string in txDateTime or isoDate
+  if (item.txDateTime) {
+    const t = new Date(item.txDateTime).getTime();
+    if (!isNaN(t)) return t;
+  }
+  if (item.isoDate) {
+    const t = new Date(item.isoDate).getTime();
+    if (!isNaN(t)) return t;
+  }
+
+  // 3. Robust parse from item.timestamp string
+  if (item.timestamp && typeof item.timestamp === 'string') {
+    const raw = item.timestamp.trim();
+
+    // Standard JavaScript Date.parse check first
+    const directParsed = Date.parse(raw);
+    if (!isNaN(directParsed)) {
+      return directParsed;
+    }
+
+    // Clean comma and normalize whitespace
+    const cleaned = raw.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+    const cleanDirect = Date.parse(cleaned);
+    if (!isNaN(cleanDirect)) {
+      return cleanDirect;
+    }
+
+    const monthMap = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+    };
+
+    // Format: "07 Oct 2026 10:13 AM" or "07 Oct 2026 22:28"
+    const matchA = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i);
+    if (matchA) {
+      const day = parseInt(matchA[1], 10);
+      const mKey = matchA[2].toLowerCase();
+      const month = monthMap[mKey] !== undefined ? monthMap[mKey] : (monthMap[mKey.slice(0, 3)] ?? 0);
+      const year = parseInt(matchA[3], 10);
+      let hours = matchA[4] !== undefined ? parseInt(matchA[4], 10) : 0;
+      const minutes = matchA[5] !== undefined ? parseInt(matchA[5], 10) : 0;
+      const seconds = matchA[6] !== undefined ? parseInt(matchA[6], 10) : 0;
+      const ampm = matchA[7] ? matchA[7].toUpperCase() : null;
+
+      if (ampm === 'PM' && hours < 12) hours += 12;
+      if (ampm === 'AM' && hours === 12) hours = 0;
+
+      const d = new Date(year, month, day, hours, minutes, seconds);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+
+    // Format: "YYYY-MM-DD HH:mm:ss"
+    const matchIso = cleaned.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/i);
+    if (matchIso) {
+      const year = parseInt(matchIso[1], 10);
+      const month = parseInt(matchIso[2], 10) - 1;
+      const day = parseInt(matchIso[3], 10);
+      const hours = matchIso[4] !== undefined ? parseInt(matchIso[4], 10) : 0;
+      const minutes = matchIso[5] !== undefined ? parseInt(matchIso[5], 10) : 0;
+      const seconds = matchIso[6] !== undefined ? parseInt(matchIso[6], 10) : 0;
+      const d = new Date(year, month, day, hours, minutes, seconds);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+
+    // Format: "DD/MM/YYYY HH:mm"
+    const matchSlash = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i);
+    if (matchSlash) {
+      const day = parseInt(matchSlash[1], 10);
+      const month = parseInt(matchSlash[2], 10) - 1;
+      const year = parseInt(matchSlash[3], 10);
+      let hours = matchSlash[4] !== undefined ? parseInt(matchSlash[4], 10) : 0;
+      const minutes = matchSlash[5] !== undefined ? parseInt(matchSlash[5], 10) : 0;
+      const seconds = matchSlash[6] !== undefined ? parseInt(matchSlash[6], 10) : 0;
+      const ampm = matchSlash[7] ? matchSlash[7].toUpperCase() : null;
+
+      if (ampm === 'PM' && hours < 12) hours += 12;
+      if (ampm === 'AM' && hours === 12) hours = 0;
+
+      const d = new Date(year, month, day, hours, minutes, seconds);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+  }
+
+  // 4. Fallback to Firestore createdAt timestamp
+  if (item.createdAt && typeof item.createdAt.toDate === 'function') {
+    return item.createdAt.toDate().getTime();
+  }
+  if (item.createdAt && item.createdAt.seconds) {
+    return item.createdAt.seconds * 1000;
+  }
+
+  return 0;
+}
+
+// Sort helper: sorts transactions strictly by date & time sequence
+function sortTransactions(list, direction = currentSortDirection) {
+  if (!Array.isArray(list)) return [];
+  return list.sort((a, b) => {
+    const millisA = a.sortMillis !== undefined ? a.sortMillis : getTransactionDateMillis(a);
+    const millisB = b.sortMillis !== undefined ? b.sortMillis : getTransactionDateMillis(b);
+
+    if (millisA !== millisB) {
+      return direction === 'asc' ? millisA - millisB : millisB - millisA;
+    }
+
+    // Tie-breaker using Firestore createdAt
+    const createdA = (a.createdAt && typeof a.createdAt.toDate === 'function')
+      ? a.createdAt.toDate().getTime()
+      : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+    const createdB = (b.createdAt && typeof b.createdAt.toDate === 'function')
+      ? b.createdAt.toDate().getTime()
+      : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+
+    if (createdA !== createdB) {
+      return direction === 'asc' ? createdA - createdB : createdB - createdA;
+    }
+
+    return (b.id || '').localeCompare(a.id || '');
+  });
+}
+
+function toggleDateSort() {
+  currentSortDirection = currentSortDirection === 'desc' ? 'asc' : 'desc';
+  updateSortIcon();
+  updateDashboardView();
+  showToast(
+    currentSortDirection === 'desc'
+      ? "Sorted: Newest transactions first (Date & Time sequence)"
+      : "Sorted: Oldest transactions first (Date & Time sequence)",
+    "info"
+  );
+}
+
+function updateSortIcon() {
+  const icon = document.getElementById('sortDirectionIcon');
+  if (icon) {
+    icon.className = currentSortDirection === 'desc'
+      ? 'fa-solid fa-arrow-down-wide-short'
+      : 'fa-solid fa-arrow-up-wide-short';
+    icon.title = currentSortDirection === 'desc' ? 'Sorted Newest First (Click for Oldest First)' : 'Sorted Oldest First (Click for Newest First)';
+  }
+}
+
 // Helper: Extract YYYY-MM from transaction item
 function getTransactionMonthKey(item) {
   if (item.monthKey) return item.monthKey;
 
-  if (item.createdAt && typeof item.createdAt.toDate === 'function') {
-    const d = item.createdAt.toDate();
+  const millis = getTransactionDateMillis(item);
+  if (millis > 0) {
+    const d = new Date(millis);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }
 
-  if (item.timestamp) {
-    // Attempt parse
-    const parsed = new Date(item.timestamp);
-    if (!isNaN(parsed.getTime())) {
-      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
-    }
+  if (item.createdAt && typeof item.createdAt.toDate === 'function') {
+    const d = item.createdAt.toDate();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }
 
   return getCurrentMonthKey();
@@ -383,6 +536,8 @@ async function checkAndApplyRecurringExpenses(userId) {
             amount: rule.amount,
             type: 'PERMANENT',
             timestamp: timestamp,
+            timestampMillis: now.getTime(),
+            txDateTime: now.toISOString(),
             monthKey: currentMonthKey,
             recurringRuleId: doc.id,
             isAutoMonthly: true,
@@ -497,17 +652,19 @@ async function addTransaction() {
   const addBtn = document.getElementById('addTransactionBtn');
   if (addBtn) addBtn.disabled = true;
 
-  // Determine date and monthKey
+  // Determine transaction date & time
   let txDate = new Date();
+  const now = new Date();
   if (dateInput) {
     const [y, m, d] = dateInput.split('-').map(Number);
-    txDate = new Date(y, m - 1, d);
+    txDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
   }
 
   const dateStr = txDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = txDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const timestamp = `${dateStr}, ${timeStr}`;
+  const timestampMillis = txDate.getTime();
+  const txDateTime = txDate.toISOString();
   const monthKey = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
 
   try {
@@ -528,6 +685,8 @@ async function addTransaction() {
       amount: amount,
       type: type,
       timestamp: timestamp,
+      timestampMillis: timestampMillis,
+      txDateTime: txDateTime,
       monthKey: monthKey,
       recurringRuleId: recurringRuleId,
       isAutoMonthly: type === 'PERMANENT',
@@ -564,16 +723,19 @@ async function addTransaction() {
 // Real-time Firestore Listener
 function loadUserTransactions() {
   db.collection('users').doc(currentUser.uid).collection('transactions')
-    .orderBy('createdAt', 'desc')
     .onSnapshot(snapshot => {
       currentTransactions = [];
 
       snapshot.forEach(doc => {
         const item = doc.data();
         item.id = doc.id;
+        item.sortMillis = getTransactionDateMillis(item);
         item.computedMonthKey = getTransactionMonthKey(item);
         currentTransactions.push(item);
       });
+
+      // Sort strictly by Date & Time sequence
+      sortTransactions(currentTransactions);
 
       // Update both summary statistics and table rows
       updateDashboardView();
@@ -584,6 +746,9 @@ function loadUserTransactions() {
 
 // Master view update: recalculates metrics & filters rows according to active month
 function updateDashboardView() {
+  // Always ensure currentTransactions is sorted
+  sortTransactions(currentTransactions);
+
   // 1. Filter transactions by selected Month
   const monthFiltered = currentTransactions.filter(item => {
     if (activeMonthKey === 'ALL') return true;
@@ -619,7 +784,10 @@ function updateDashboardView() {
     }
   }
 
-  // 4. Render Table with further text search and type filter
+  // 4. Update Smart Month-End Financial Health & Savings Advisor
+  updateAdvisorView(totalIncome, totalExpense, net, monthFiltered);
+
+  // 5. Render Table with further text search and type filter
   renderTransactionsTable(monthFiltered);
 }
 
@@ -628,10 +796,13 @@ function filterTransactions() {
 }
 
 function renderTransactionsTable(sourceTransactions) {
-  const listToRender = sourceTransactions || currentTransactions.filter(item => {
+  const baseList = sourceTransactions || currentTransactions.filter(item => {
     if (activeMonthKey === 'ALL') return true;
     return (item.computedMonthKey || item.monthKey) === activeMonthKey;
   });
+
+  // Ensure current sort order is maintained
+  sortTransactions(baseList);
 
   const table = document.getElementById('historyTable');
   const emptyState = document.getElementById('emptyState');
@@ -641,7 +812,7 @@ function renderTransactionsTable(sourceTransactions) {
 
   table.innerHTML = '';
 
-  const filtered = listToRender.filter(item => {
+  const filtered = baseList.filter(item => {
     const matchesSearch = !searchQuery || (item.title && item.title.toLowerCase().includes(searchQuery));
     const matchesType = typeFilter === 'ALL' || item.type === typeFilter;
     return matchesSearch && matchesType;
@@ -720,4 +891,362 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// ==========================================================================
+// Smart Financial Health & Month-End Savings Advisor
+// ==========================================================================
+
+let isAdvisorExpanded = false;
+
+function toggleAdvisorDetails() {
+  const content = document.getElementById('advisorExpandedContent');
+  const btn = document.getElementById('btnToggleAdvisor');
+  if (!content || !btn) return;
+
+  isAdvisorExpanded = !isAdvisorExpanded;
+  content.style.display = isAdvisorExpanded ? 'block' : 'none';
+  btn.classList.toggle('expanded', isAdvisorExpanded);
+
+  const span = btn.querySelector('span');
+  if (span) {
+    span.innerText = isAdvisorExpanded ? 'Hide Advice' : 'Savings Advice';
+  }
+}
+
+function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
+  const monthLabel = formatMonthLabel(activeMonthKey);
+  const subtitle = document.getElementById('advisorPeriodSubtitle');
+  if (subtitle) {
+    subtitle.innerText = `Personalized budget & savings guidance for ${monthLabel}`;
+  }
+
+  // Calculations
+  const savingsRate = totalIncome > 0 ? ((net / totalIncome) * 100) : 0;
+  const burnRate = totalIncome > 0 ? ((totalExpense / totalIncome) * 100) : (totalExpense > 0 ? 100 : 0);
+  const dailyCap = Math.max(0, Math.floor((totalIncome * 0.8) / 30));
+
+  // Health Score Calculation (0 - 100)
+  let healthScore = 50;
+  let statusClass = 'status-warning';
+  let statusText = 'Fair / Modest';
+  let bannerType = 'warning';
+  let bannerIcon = 'fa-circle-exclamation';
+  let bannerHeading = '';
+  let bannerText = '';
+
+  if (totalIncome === 0 && totalExpense === 0) {
+    healthScore = 50;
+    statusClass = 'status-warning';
+    statusText = 'No Activity Yet';
+    bannerType = 'warning';
+    bannerIcon = 'fa-circle-info';
+    bannerHeading = 'No Transactions Recorded';
+    bannerText = `Aapne ${monthLabel} ke liye abhi koi aamadni ya kharcha record nahi kiya. Apni pehli transaction add karke financial tracking shuru karein.`;
+  } else if (net < 0) {
+    // Deficit (Expenses > Income)
+    const deficitRatio = Math.min(1, Math.abs(net) / (totalExpense || 1));
+    healthScore = Math.max(15, Math.round(45 - deficitRatio * 30));
+    statusClass = 'status-danger';
+    statusText = 'Deficit Alert 🚨';
+    bannerType = 'danger';
+    bannerIcon = 'fa-triangle-exclamation';
+    bannerHeading = `🚨 Deficit Alert: Kharcha Aamadni se Barh Gaya Hai!`;
+    bannerText = `Aapne is mahine apni kul aamadni se <strong>Rs. ${Math.abs(net).toLocaleString()}</strong> ziada kharch kar diye hain (Burn Rate: <strong>${burnRate.toFixed(1)}%</strong>). Yeh situation emergency savings ko deplete karti hai. Ghair zaroori kharche foran rokein.`;
+  } else if (savingsRate >= 20) {
+    // Healthy (Saving >= 20%)
+    healthScore = Math.min(100, Math.round(80 + (savingsRate - 20) * 0.6));
+    statusClass = 'status-healthy';
+    statusText = 'Super Healthy 💚';
+    bannerType = 'healthy';
+    bannerIcon = 'fa-circle-check';
+    bannerHeading = `🌟 Zabardast Financial Control!`;
+    bannerText = `Masha'Allah! Aapne is mahine apni aamadni ka <strong>${savingsRate.toFixed(1)}% (Rs. ${net.toLocaleString()})</strong> kamyabi se bacha liya hai! Yeh ek behtareen savings rate hai.`;
+  } else {
+    // Low Savings (0% - 19.9%)
+    healthScore = Math.round(55 + (savingsRate / 20) * 20);
+    statusClass = 'status-warning';
+    statusText = 'Low Savings ⚠️';
+    bannerType = 'warning';
+    bannerIcon = 'fa-triangle-exclamation';
+    bannerHeading = `⚠️ Low Savings Margin: Bachat Kam Hai`;
+    bannerText = `Aapne is mahine sirf <strong>${savingsRate.toFixed(1)}% (Rs. ${net.toLocaleString()})</strong> bachaya hai, jabke ideal bachat kam az kam <strong>20%</strong> honi chahiye. Chote kharche control karke savings barhayein.`;
+  }
+
+  // Update Quick Metric Values
+  const elSavingsRate = document.getElementById('qmSavingsRate');
+  if (elSavingsRate) {
+    elSavingsRate.innerText = (savingsRate >= 0 ? '+' : '') + savingsRate.toFixed(1) + '%';
+    elSavingsRate.style.color = savingsRate >= 20 ? 'var(--income-color)' : (savingsRate >= 0 ? '#f59e0b' : 'var(--expense-color)');
+  }
+
+  const elBurnRate = document.getElementById('qmBurnRate');
+  if (elBurnRate) {
+    elBurnRate.innerText = burnRate.toFixed(1) + '%';
+    elBurnRate.style.color = burnRate > 100 ? 'var(--expense-color)' : (burnRate > 80 ? '#f59e0b' : 'var(--income-color)');
+  }
+
+  const elDailyCap = document.getElementById('qmDailyCap');
+  if (elDailyCap) {
+    elDailyCap.innerText = totalIncome > 0 ? `Rs. ${dailyCap.toLocaleString()}` : 'Rs. 0';
+  }
+
+  const elHealthScore = document.getElementById('qmHealthScore');
+  if (elHealthScore) {
+    elHealthScore.innerText = `${healthScore} / 100`;
+  }
+
+  const elHealthStatus = document.getElementById('qmHealthStatus');
+  if (elHealthStatus) {
+    elHealthStatus.innerText = statusText;
+  }
+
+  const pill = document.getElementById('advisorHealthPill');
+  if (pill) {
+    pill.className = `advisor-pill ${statusClass}`;
+    pill.innerHTML = `<i class="fa-solid fa-heart-pulse"></i> ${statusText}`;
+  }
+
+  // Update Status Banner
+  const banner = document.getElementById('advisorStatusBanner');
+  if (banner) {
+    banner.className = `advisor-status-banner banner-${bannerType}`;
+    banner.innerHTML = `
+      <i class="fa-solid ${bannerIcon}"></i>
+      <div>
+        <strong>${bannerHeading}</strong>
+        <p style="margin: 4px 0 0; font-size: 0.85rem;">${bannerText}</p>
+      </div>
+    `;
+  }
+
+  // Update 50/30/20 Ideal Budget Guide
+  const elIncomeDisplay = document.getElementById('guideIncomeDisplay');
+  if (elIncomeDisplay) {
+    elIncomeDisplay.innerText = `Rs. ${totalIncome.toLocaleString()}`;
+  }
+
+  const needsTarget = Math.round(totalIncome * 0.5);
+  const wantsTarget = Math.round(totalIncome * 0.3);
+  const savingsTarget = Math.round(totalIncome * 0.2);
+
+  const elNeedsVal = document.getElementById('guideNeedsVal');
+  if (elNeedsVal) elNeedsVal.innerText = `Rs. ${needsTarget.toLocaleString()}`;
+
+  const elWantsVal = document.getElementById('guideWantsVal');
+  if (elWantsVal) elWantsVal.innerText = `Rs. ${wantsTarget.toLocaleString()}`;
+
+  const elSavingsVal = document.getElementById('guideSavingsVal');
+  if (elSavingsVal) elSavingsVal.innerText = `Rs. ${savingsTarget.toLocaleString()}`;
+
+  // Populate Dynamic Actionable Tips List
+  const tipsList = document.getElementById('advisorTipsList');
+  if (tipsList) {
+    const tips = [];
+
+    if (net < 0) {
+      tips.push({
+        icon: 'fa-hand-holding-dollar',
+        title: '1. Pay Yourself First (Aamadni aate hi 20% alag karein)',
+        desc: `Salary/Income aane par mahine ke aakhri bache hue paison ka intezar na karein. Pehle din hi kam az kam Rs. ${savingsTarget > 0 ? savingsTarget.toLocaleString() : '5,000'} kisi alag account ya committee mein save kar dein.`
+      });
+      tips.push({
+        icon: 'fa-ban',
+        title: '2. Immediate Non-Essential Spending Freeze',
+        desc: `Aapka budget deficit mein hai. Agle mahine tak online shopping, baahir se khana, aur ghair zaroori purchases par 100% stop lagayein taake balance recover ho sake.`
+      });
+      tips.push({
+        icon: 'fa-hourglass-half',
+        title: '3. The 72-Hour Rule (Impulse Buying Control)',
+        desc: `Kisi bhi aisi cheez par jo foran zaroori na ho, khareedne se pehle 72 ghante intezar karein. Ziada tar shauq 3 din baad khatam ho jata hai aur paise bach jate hain.`
+      });
+      tips.push({
+        icon: 'fa-calendar-check',
+        title: `4. Daily Micro-Budget (Rs. ${dailyCap > 0 ? dailyCap.toLocaleString() : '1,000'} / Day Limit)`,
+        desc: `Apne rozana ke kharchon ke liye had muqarrar karein. Agar kisi din ziada kharch ho jaye toh agle 2 din kharche kam karke budget balance karein.`
+      });
+    } else if (savingsRate < 20) {
+      tips.push({
+        icon: 'fa-piggy-bank',
+        title: '1. 20% Savings Target (Bachat ka Hadaf)',
+        desc: `Is mahine aapka savings rate ${savingsRate.toFixed(1)}% raha. Kam az kam 20% (Rs. ${savingsTarget.toLocaleString()}) bachane ke liye discretionary kharchon mein se 15% kami karein.`
+      });
+      tips.push({
+        icon: 'fa-repeat',
+        title: '2. Fixed vs Variable Outflows Audit',
+        desc: `Aapke fixed rules (jaise ghar k kharcha, bills) ko examine karein. Jahan electricity, subscriptions ya fuel mein bachat mumkin ho, wahan control karein.`
+      });
+      tips.push({
+        icon: 'fa-utensils',
+        title: '3. Food & Dining Out Optimization',
+        desc: `Tea, snacks, cafe visits aur food delivery ke chote chote kharche mahine ke aakhir mein hazaron ban jate hain. Ghar ke khane ko tarjeeh dein.`
+      });
+      tips.push({
+        icon: 'fa-wallet',
+        title: `4. Daily Spending Target: Rs. ${dailyCap.toLocaleString()} / Day`,
+        desc: `Agle mahine rozana ke kharche ko is had ke andar rakhne ki koshish karein taake month-end par Rs. ${savingsTarget.toLocaleString()} ka safe buffer bache.`
+      });
+    } else {
+      tips.push({
+        icon: 'fa-trophy',
+        title: '1. Maintain Momentum (Bachat ki Aadat Barqarar Rakhein)',
+        desc: `Aapka savings rate (${savingsRate.toFixed(1)}%) bohot zabardast hai! Is raqam (Rs. ${net.toLocaleString()}) ko ghair zaroori tor par kharch na hone dein.`
+      });
+      tips.push({
+        icon: 'fa-shield-halved',
+        title: '2. Build 3-6 Months Emergency Fund',
+        desc: `Kam az kam 3 se 6 mahine ke kharchon (approx Rs. ${(totalExpense * 3).toLocaleString()}) ka emergency fund kisi secure jagah jama karein taake mushkil waqt mein sukoon rahe.`
+      });
+      tips.push({
+        icon: 'fa-arrow-trend-up',
+        title: '3. Avoid Lifestyle Creep',
+        desc: `Aamadni barhne ke sath sath standards barhana aam baat hai, lekin apne fixed expenses ko hamesha 50% se kam rakhein.`
+      });
+    }
+
+    tipsList.innerHTML = tips.map(tip => `
+      <div class="tip-item">
+        <div class="tip-icon"><i class="fa-solid ${tip.icon}"></i></div>
+        <div class="tip-content">
+          <strong>${tip.title}</strong>
+          <p>${tip.desc}</p>
+        </div>
+      </div>
+    `).join('');
+  }
+}
+
+// ==========================================================================
+// Modernized Excel Spreadsheet (.xlsx) Exporter
+// ==========================================================================
+
+function exportTransactionsToExcel() {
+  if (typeof XLSX === 'undefined') {
+    showToast("Excel export engine is loading, please try in a moment...", "error");
+    return;
+  }
+
+  // 1. Gather filtered list of transactions for active month
+  const monthFiltered = currentTransactions.filter(item => {
+    if (activeMonthKey === 'ALL') return true;
+    return (item.computedMonthKey || item.monthKey) === activeMonthKey;
+  });
+
+  if (monthFiltered.length === 0) {
+    showToast("No transactions available to export for this period.", "error");
+    return;
+  }
+
+  // Compute Metrics for the export
+  let totalIncome = 0;
+  let totalExpense = 0;
+  monthFiltered.forEach(item => {
+    if (item.type === 'IN') totalIncome += (item.amount || 0);
+    else totalExpense += (item.amount || 0);
+  });
+  const net = totalIncome - totalExpense;
+  const savingsRate = totalIncome > 0 ? ((net / totalIncome) * 100).toFixed(1) + '%' : '0.0%';
+  const healthStatus = net < 0 ? 'Deficit Alert' : (totalIncome > 0 && (net / totalIncome) >= 0.2 ? 'Healthy Saver' : 'Low Savings');
+  const monthLabel = formatMonthLabel(activeMonthKey);
+  const exportTimestamp = new Date().toLocaleString('en-GB');
+
+  // Create a new Workbook
+  const wb = XLSX.utils.book_new();
+
+  // -------------------------------------------------------------
+  // Sheet 1: Transactions History
+  // -------------------------------------------------------------
+  const sheet1Data = [
+    ["SMARTFLOW EXPENSE TRACKER - FINANCIAL REPORT"],
+    ["Period:", monthLabel, "", "Exported On:", exportTimestamp],
+    [""],
+    ["EXECUTIVE FINANCIAL SUMMARY"],
+    ["Total Income (PKR):", totalIncome, "Total Expense (PKR):", totalExpense, "Net Balance (PKR):", net],
+    ["Savings Rate:", savingsRate, "Financial Health Status:", healthStatus],
+    [""],
+    ["#", "Date & Time", "Title / Description", "Category", "Amount (PKR)", "Cashflow", "Month Key"]
+  ];
+
+  // Add individual transactions
+  monthFiltered.forEach((tx, idx) => {
+    let catText = 'Expense (OUT)';
+    let flowSign = `- Rs. ${(tx.amount || 0).toLocaleString()}`;
+    if (tx.type === 'IN') {
+      catText = 'Income (IN)';
+      flowSign = `+ Rs. ${(tx.amount || 0).toLocaleString()}`;
+    } else if (tx.type === 'PERMANENT') {
+      catText = 'Permanent / Fixed Outflow';
+    }
+
+    sheet1Data.push([
+      idx + 1,
+      tx.timestamp || 'N/A',
+      tx.title || 'Untitled',
+      catText,
+      tx.amount || 0,
+      flowSign,
+      tx.computedMonthKey || tx.monthKey || 'N/A'
+    ]);
+  });
+
+  const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
+
+  // Set spacious column widths for Sheet 1
+  ws1['!cols'] = [
+    { wch: 6 },   // #
+    { wch: 24 },  // Date & Time
+    { wch: 32 },  // Title
+    { wch: 25 },  // Category
+    { wch: 16 },  // Amount
+    { wch: 18 },  // Cashflow
+    { wch: 12 }   // Month
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws1, "Transactions History");
+
+  // -------------------------------------------------------------
+  // Sheet 2: Month-End Financial Advice & Savings Plan
+  // -------------------------------------------------------------
+  const needsBudget = Math.round(totalIncome * 0.5);
+  const wantsBudget = Math.round(totalIncome * 0.3);
+  const savingsBudget = Math.round(totalIncome * 0.2);
+  const dailyCap = Math.max(0, Math.floor((totalIncome * 0.8) / 30));
+
+  const sheet2Data = [
+    ["SMARTFLOW - MONTH-END SAVINGS & BUDGET ADVISOR"],
+    ["Target Period:", monthLabel, "", "Generated At:", exportTimestamp],
+    [""],
+    ["1. THE 50 / 30 / 20 BUDGET DISTRIBUTION TARGETS"],
+    ["Budget Bucket", "Recommended %", "Target Amount (PKR)", "Description / Purpose"],
+    ["Needs (Essentials)", "50% max", needsBudget, "Rent, groceries, utility bills, transportation"],
+    ["Wants (Lifestyle)", "30% max", wantsBudget, "Dining out, entertainment, shopping, subscriptions"],
+    ["Savings (Future)", "20% min", savingsBudget, "Emergency reserve, investments, wealth accumulation"],
+    [""],
+    ["2. DAILY BUDGET GUIDELINES"],
+    ["Suggested Daily Spend Cap:", `Rs. ${dailyCap.toLocaleString()} / day`, "(To ensure at least 20% savings target is met)"],
+    [""],
+    ["3. ACTIONABLE MONEY-SAVING RULES & ADVICE"],
+    ["Rule 1: Pay Yourself First", `Salary aate hi foran kam az kam 20% (Rs. ${savingsBudget.toLocaleString()}) alag account mein transfer karein.`],
+    ["Rule 2: 72-Hour Rule", "Ghair zaroori impulse purchase karne se pehle 72 ghante intezar karein."],
+    ["Rule 3: Fixed Outflow Review", "Fixed recurring expenses (subscriptions, rent, bills) ko regular review karein."],
+    ["Rule 4: Emergency Fund", `Kam az kam 3 mahine ke kharchon (Rs. ${(totalExpense * 3).toLocaleString()}) ka emergency buffer maintain karein.`]
+  ];
+
+  const ws2 = XLSX.utils.aoa_to_sheet(sheet2Data);
+  ws2['!cols'] = [
+    { wch: 28 },
+    { wch: 20 },
+    { wch: 25 },
+    { wch: 60 }
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws2, "Savings & Budget Advice");
+
+  // -------------------------------------------------------------
+  // Trigger file download
+  // -------------------------------------------------------------
+  const safeFilename = `SmartFlow_${activeMonthKey === 'ALL' ? 'AllTime' : activeMonthKey}_Report.xlsx`;
+  XLSX.writeFile(wb, safeFilename);
+
+  showToast(`📊 Modernized Excel file downloaded: ${safeFilename}`, 'success');
 }
