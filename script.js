@@ -257,7 +257,6 @@ function getTransactionMonthKey(item) {
   }
 
   if (item.timestamp) {
-    // Attempt parse
     const parsed = new Date(item.timestamp);
     if (!isNaN(parsed.getTime())) {
       return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
@@ -265,6 +264,21 @@ function getTransactionMonthKey(item) {
   }
 
   return getCurrentMonthKey();
+}
+
+// ==========================================================================
+// Helper: Extract Numeric Timestamp for Precise Sorting (Date & Time)
+// ==========================================================================
+function getNumericTimestamp(item) {
+  if (item.sortTimestamp) return item.sortTimestamp;
+  if (item.createdAt && typeof item.createdAt.toMillis === 'function') {
+    return item.createdAt.toMillis();
+  }
+  if (item.timestamp) {
+    const parsed = Date.parse(item.timestamp);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 0;
 }
 
 // ==========================================================================
@@ -383,6 +397,7 @@ async function checkAndApplyRecurringExpenses(userId) {
             amount: rule.amount,
             type: 'PERMANENT',
             timestamp: timestamp,
+            sortTimestamp: Date.now(),
             monthKey: currentMonthKey,
             recurringRuleId: doc.id,
             isAutoMonthly: true,
@@ -497,18 +512,21 @@ async function addTransaction() {
   const addBtn = document.getElementById('addTransactionBtn');
   if (addBtn) addBtn.disabled = true;
 
-  // Determine date and monthKey
+  // Selected date aur exact current time combine karna
+  const now = new Date();
   let txDate = new Date();
+
   if (dateInput) {
     const [y, m, d] = dateInput.split('-').map(Number);
-    txDate = new Date(y, m - 1, d);
+    // User ki picked date ke sath current live Time attach kiya taake sorting exact time wise ho
+    txDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
   }
 
   const dateStr = txDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = txDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const timestamp = `${dateStr}, ${timeStr}`;
   const monthKey = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
+  const sortTimestamp = txDate.getTime(); // Exact Date & Time milliseconds
 
   try {
     let recurringRuleId = null;
@@ -528,6 +546,7 @@ async function addTransaction() {
       amount: amount,
       type: type,
       timestamp: timestamp,
+      sortTimestamp: sortTimestamp, // Explicit timestamp for sorting
       monthKey: monthKey,
       recurringRuleId: recurringRuleId,
       isAutoMonthly: type === 'PERMANENT',
@@ -541,7 +560,7 @@ async function addTransaction() {
     const notice = document.getElementById('permanentNotice');
     if (notice) notice.style.display = 'none';
 
-    // If active month filter is different from transaction month, notify or sync
+    // If active month filter is different from transaction month, sync
     if (activeMonthKey !== 'ALL' && activeMonthKey !== monthKey) {
       activeMonthKey = monthKey;
       const picker = document.getElementById('monthPicker');
@@ -564,7 +583,6 @@ async function addTransaction() {
 // Real-time Firestore Listener
 function loadUserTransactions() {
   db.collection('users').doc(currentUser.uid).collection('transactions')
-    .orderBy('createdAt', 'desc')
     .onSnapshot(snapshot => {
       currentTransactions = [];
 
@@ -575,7 +593,10 @@ function loadUserTransactions() {
         currentTransactions.push(item);
       });
 
-      // Update both summary statistics and table rows
+      // Master client-side sort by Date & Time (Newest First)
+      currentTransactions.sort((a, b) => getNumericTimestamp(b) - getNumericTimestamp(a));
+
+      // Update summary statistics and table rows
       updateDashboardView();
     }, error => {
       showToast("Error loading records: " + error.message, "error");
@@ -619,7 +640,7 @@ function updateDashboardView() {
     }
   }
 
-  // 4. Render Table with further text search and type filter
+  // 4. Render Table with search and type filter
   renderTransactionsTable(monthFiltered);
 }
 
@@ -641,11 +662,14 @@ function renderTransactionsTable(sourceTransactions) {
 
   table.innerHTML = '';
 
-  const filtered = listToRender.filter(item => {
+  let filtered = listToRender.filter(item => {
     const matchesSearch = !searchQuery || (item.title && item.title.toLowerCase().includes(searchQuery));
     const matchesType = typeFilter === 'ALL' || item.type === typeFilter;
     return matchesSearch && matchesType;
   });
+
+  // Final Strict Sort: Latest Date & Time First
+  filtered.sort((a, b) => getNumericTimestamp(b) - getNumericTimestamp(a));
 
   if (filtered.length === 0) {
     if (emptyState) {
@@ -685,39 +709,3 @@ function renderTransactionsTable(sourceTransactions) {
     }
 
     const row = table.insertRow();
-    row.innerHTML = `
-      <td>${item.timestamp || 'Just now'}</td>
-      <td><strong>${escapeHtml(item.title)}</strong></td>
-      <td>${typeTag}</td>
-      <td class="td-amount ${amountClass}">${amountPrefix}Rs. ${(item.amount || 0).toLocaleString()}</td>
-      <td style="text-align: center;">
-        <button class="btn-delete" onclick="deleteTransaction('${item.id}')" title="Delete record">
-          <i class="fa-regular fa-trash-can"></i>
-        </button>
-      </td>
-    `;
-  });
-}
-
-function deleteTransaction(docId) {
-  if (confirm("Are you sure you want to delete this transaction record?")) {
-    db.collection('users').doc(currentUser.uid).collection('transactions').doc(docId).delete()
-      .then(() => {
-        showToast("Transaction deleted", "info");
-      })
-      .catch(err => {
-        showToast("Error deleting: " + err.message, "error");
-      });
-  }
-}
-
-// Utility: Prevent XSS
-function escapeHtml(str) {
-  if (!str) return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
