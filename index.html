@@ -235,10 +235,10 @@
           <strong class="qm-value" id="qmBurnRate">0%</strong>
           <span class="qm-hint" id="qmBurnHint">of Income spent</span>
         </div>
-        <div class="quick-metric-item">
+        <div class="quick-metric-item" id="qmDailyCapCard">
           <span class="qm-label"><i class="fa-solid fa-calendar-day"></i> Suggested Daily Cap</span>
           <strong class="qm-value" id="qmDailyCap">Rs. 0</strong>
-          <span class="qm-hint">to maintain savings</span>
+          <span class="qm-hint" id="qmDailyCapHint">to maintain savings</span>
         </div>
         <div class="quick-metric-item">
           <span class="qm-label"><i class="fa-solid fa-heart-pulse"></i> Financial Health</span>
@@ -252,6 +252,75 @@
         <!-- Dynamic Alert Banner -->
         <div class="advisor-status-banner" id="advisorStatusBanner">
           <!-- Populated by JS -->
+        </div>
+
+        <!-- Dynamic Daily Cap & Spend Reduction / Recovery Guide -->
+        <div class="advisor-box daily-cap-box" id="dailyCapBox">
+          <div class="daily-cap-header">
+            <div class="box-head">
+              <i class="fa-solid fa-bullseye"></i>
+              <h4>Daily Cap & Expense Pace Guide (Rozana Kharcha Control)</h4>
+            </div>
+            <span class="daily-cap-status-pill" id="dailyCapStatusPill">
+              <i class="fa-solid fa-calculator"></i> Calculating...
+            </span>
+          </div>
+
+          <p class="box-desc" id="dailyCapDesc">
+            Rozana kharchon ko daily cap ke mutabiq track karein aur janein ke budget balance aur cap pura karne ke liye kitna kharcha kam karna hoga.
+          </p>
+
+          <!-- 4 Daily Cap Live KPI Badges -->
+          <div class="daily-cap-stats-grid">
+            <div class="cap-stat-card">
+              <span class="cap-stat-label"><i class="fa-solid fa-calendar-day"></i> Base Daily Cap</span>
+              <strong class="cap-stat-value" id="capStatBase">Rs. 0</strong>
+              <span class="cap-stat-sub" id="capStatBaseSub">Rozana Target Limit</span>
+            </div>
+            <div class="cap-stat-card" id="capStatTodayCard">
+              <span class="cap-stat-label"><i class="fa-solid fa-receipt"></i> Aaj Ka Kharcha</span>
+              <strong class="cap-stat-value" id="capStatToday">Rs. 0</strong>
+              <span class="cap-stat-sub" id="capStatTodaySub">Today's Total Spend</span>
+            </div>
+            <div class="cap-stat-card highlight-cut" id="capStatCutCard">
+              <span class="cap-stat-label"><i class="fa-solid fa-scissors"></i> Rozana Kami Target</span>
+              <strong class="cap-stat-value" id="capStatCut">Rs. 0</strong>
+              <span class="cap-stat-sub" id="capStatCutSub">Daily Reduction Needed</span>
+            </div>
+            <div class="cap-stat-card highlight-adjusted" id="capStatAdjCard">
+              <span class="cap-stat-label"><i class="fa-solid fa-flag-checkered"></i> Naya Rozana Limit</span>
+              <strong class="cap-stat-value" id="capStatAdjusted">Rs. 0</strong>
+              <span class="cap-stat-sub" id="capStatAdjustedSub">Agle dino ke liye</span>
+            </div>
+          </div>
+
+          <!-- Visual Progress Tracks -->
+          <div class="daily-cap-progress-section">
+            <div class="cap-progress-row">
+              <div class="cap-progress-meta">
+                <span><i class="fa-regular fa-clock"></i> <strong>Today's Spending:</strong> <span id="capProgressTodayText">Rs. 0 / Rs. 0 limit</span></span>
+                <span id="capProgressTodayPercent" class="cap-percent-badge">0%</span>
+              </div>
+              <div class="b-progress-track">
+                <div class="b-progress-fill" id="capProgressTodayFill" style="width: 0%;"></div>
+              </div>
+            </div>
+
+            <div class="cap-progress-row">
+              <div class="cap-progress-meta">
+                <span><i class="fa-solid fa-chart-line"></i> <strong>Month-to-Date Budget Pace:</strong> <span id="capProgressMonthText">Rs. 0 spent</span></span>
+                <span id="capProgressMonthPercent" class="cap-percent-badge">0%</span>
+              </div>
+              <div class="b-progress-track">
+                <div class="b-progress-fill" id="capProgressMonthFill" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dynamic Live Reduction Guidance Box -->
+          <div class="daily-cap-advice-box" id="dailyCapAdviceBox">
+            <!-- Populated by JS -->
+          </div>
         </div>
 
         <div class="advisor-grid">

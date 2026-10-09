@@ -1623,6 +1623,10 @@ td:nth-child(2) {
     grid-template-columns: 1fr 1fr;
   }
 
+  .daily-cap-stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .advisor-grid {
     grid-template-columns: 1fr;
   }
@@ -1630,6 +1634,10 @@ td:nth-child(2) {
 
 @media (max-width: 480px) {
   .advisor-quick-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-cap-stats-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1875,6 +1883,250 @@ td:nth-child(2) {
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 20px;
+}
+
+/* Daily Cap & Spending Pace Guide Box */
+.daily-cap-box {
+  margin-bottom: 22px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 22px;
+  position: relative;
+  overflow: hidden;
+}
+
+.daily-cap-box::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--brand-gradient);
+}
+
+.daily-cap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.daily-cap-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: var(--bg-tag);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.daily-cap-status-pill.status-healthy {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.daily-cap-status-pill.status-warning {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+.daily-cap-status-pill.status-danger {
+  background: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.3);
+  color: #f43f5e;
+}
+
+.daily-cap-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.cap-stat-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: transform var(--trans-fast), border-color var(--trans-fast);
+}
+
+.cap-stat-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.cap-stat-card.highlight-cut {
+  border-color: rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.05);
+}
+
+.cap-stat-card.highlight-adjusted {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.cap-stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cap-stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.cap-stat-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.daily-cap-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 16px 0;
+  background: var(--bg-input);
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.cap-progress-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cap-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.cap-percent-badge {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.daily-cap-advice-box {
+  margin-top: 14px;
+}
+
+.cap-advice-alert {
+  padding: 14px 16px;
+  border-radius: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  border: 1px solid var(--border-color);
+}
+
+.cap-advice-alert i {
+  font-size: 1.25rem;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.cap-advice-alert.healthy {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.25);
+  color: #10b981;
+}
+.cap-advice-alert.healthy p,
+.cap-advice-alert.healthy strong {
+  color: #10b981;
+}
+[data-theme="dark"] .cap-advice-alert.healthy p {
+  color: #a7f3d0;
+}
+
+.cap-advice-alert.warning {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.28);
+  color: #d97706;
+}
+.cap-advice-alert.warning strong {
+  color: #d97706;
+}
+[data-theme="dark"] .cap-advice-alert.warning {
+  color: #fbbf24;
+}
+[data-theme="dark"] .cap-advice-alert.warning p {
+  color: #fde68a;
+}
+
+.cap-advice-alert.danger {
+  background: rgba(244, 63, 94, 0.08);
+  border-color: rgba(244, 63, 94, 0.28);
+  color: #f43f5e;
+}
+.cap-advice-alert.danger strong {
+  color: #f43f5e;
+}
+[data-theme="dark"] .cap-advice-alert.danger p {
+  color: #fecdd3;
+}
+
+.cap-advice-alert.info {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.25);
+  color: var(--brand-primary);
+}
+
+.cap-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.cap-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.83rem;
+  color: var(--text-primary);
+}
+
+.cap-step-item .step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .box-head {

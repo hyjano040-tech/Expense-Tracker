@@ -353,6 +353,24 @@ function getTransactionDateMillis(item) {
   return 0;
 }
 
+// Helper: Get JavaScript Date object for a transaction
+function getItemDate(item) {
+  if (!item) return null;
+  const millis = item.sortMillis !== undefined ? item.sortMillis : getTransactionDateMillis(item);
+  if (millis && millis > 0) return new Date(millis);
+  if (item.createdAt && typeof item.createdAt.toDate === 'function') return item.createdAt.toDate();
+  if (item.createdAt?.seconds) return new Date(item.createdAt.seconds * 1000);
+  return null;
+}
+
+// Helper: Check if two dates represent the same calendar day
+function isSameDay(date1, date2) {
+  if (!date1 || !date2) return false;
+  return date1.getFullYear() === date2.getFullYear() &&
+         date1.getMonth() === date2.getMonth() &&
+         date1.getDate() === date2.getDate();
+}
+
 // Sort helper: sorts transactions strictly by date & time sequence
 function sortTransactions(list, direction = currentSortDirection) {
   if (!Array.isArray(list)) return [];
@@ -921,12 +939,117 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
     subtitle.innerText = `Personalized budget & savings guidance for ${monthLabel}`;
   }
 
-  // Calculations
+  // Savings & Burn rate calculations
   const savingsRate = totalIncome > 0 ? ((net / totalIncome) * 100) : 0;
   const burnRate = totalIncome > 0 ? ((totalExpense / totalIncome) * 100) : (totalExpense > 0 ? 100 : 0);
-  const dailyCap = Math.max(0, Math.floor((totalIncome * 0.8) / 30));
 
-  // Health Score Calculation (0 - 100)
+  // --------------------------------------------------------------------------
+  // Calendar & Month Day Calculations
+  // --------------------------------------------------------------------------
+  const now = new Date();
+  const currentRealMonthKey = getCurrentMonthKey();
+
+  let daysInMonth = 30;
+  let daysPassed = now.getDate();
+  let remainingDays = Math.max(1, 30 - daysPassed + 1);
+  let isPastMonth = false;
+  let isFutureMonth = false;
+
+  if (activeMonthKey !== 'ALL' && activeMonthKey.includes('-')) {
+    const [yStr, mStr] = activeMonthKey.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    daysInMonth = new Date(y, m, 0).getDate(); // Total days in this active month
+
+    if (activeMonthKey === currentRealMonthKey) {
+      daysPassed = Math.min(daysInMonth, Math.max(1, now.getDate()));
+      remainingDays = Math.max(1, daysInMonth - daysPassed + 1); // including today
+    } else if (activeMonthKey < currentRealMonthKey) {
+      isPastMonth = true;
+      daysPassed = daysInMonth;
+      remainingDays = 0;
+    } else {
+      isFutureMonth = true;
+      daysPassed = 0;
+      remainingDays = daysInMonth;
+    }
+  } else {
+    // ALL time view: default to current month's pacing
+    daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    daysPassed = Math.min(daysInMonth, Math.max(1, now.getDate()));
+    remainingDays = Math.max(1, daysInMonth - daysPassed + 1);
+  }
+
+  // --------------------------------------------------------------------------
+  // Dynamic Daily Cap & Spend Reduction / Recovery Calculations
+  // --------------------------------------------------------------------------
+  // Safe Expense Budget = 80% of income (Needs 50% + Wants 30%, reserving 20% savings)
+  const maxMonthlyBudget = Math.round(totalIncome * 0.8);
+  const baseDailyCap = totalIncome > 0 ? Math.max(0, Math.floor(maxMonthlyBudget / daysInMonth)) : 0;
+
+  // Calculate today's spending from active month transactions
+  let todayExpense = 0;
+  if (!isPastMonth && !isFutureMonth) {
+    (monthTransactions || []).forEach(item => {
+      if (item.type !== 'IN') {
+        const itemDate = getItemDate(item);
+        if (itemDate && isSameDay(itemDate, now)) {
+          todayExpense += (item.amount || 0);
+        }
+      }
+    });
+  }
+
+  // Month-to-date pacing analysis
+  const expectedSpendToDate = baseDailyCap * daysPassed;
+  const paceDifference = totalExpense - expectedSpendToDate;
+  const remainingBudget = maxMonthlyBudget - totalExpense;
+
+  let adjustedDailyCap = 0;
+  let dailyCutRequired = 0;
+  let dailyCutPercentage = 0;
+  let capStatusType = 'healthy';
+  let capStatusText = 'On Track';
+
+  if (totalIncome === 0) {
+    capStatusType = 'warning';
+    capStatusText = 'No Income Set';
+  } else if (remainingDays === 0) {
+    // Past month
+    if (totalExpense > maxMonthlyBudget) {
+      capStatusType = 'danger';
+      capStatusText = 'Over Budget Limit';
+    } else {
+      capStatusType = 'healthy';
+      capStatusText = 'Completed Within Cap';
+    }
+  } else if (remainingBudget <= 0) {
+    // Exhausted entire 80% budget!
+    capStatusType = 'danger';
+    capStatusText = 'Budget Deficit 🚨';
+    adjustedDailyCap = 0;
+    dailyCutRequired = baseDailyCap;
+    dailyCutPercentage = 100;
+  } else {
+    // Remaining days > 0 and remainingBudget > 0
+    adjustedDailyCap = Math.max(0, Math.floor(remainingBudget / remainingDays));
+
+    if (adjustedDailyCap < baseDailyCap) {
+      dailyCutRequired = baseDailyCap - adjustedDailyCap;
+      dailyCutPercentage = baseDailyCap > 0 ? Math.round((dailyCutRequired / baseDailyCap) * 100) : 0;
+      capStatusType = dailyCutPercentage > 35 ? 'danger' : 'warning';
+      capStatusText = dailyCutPercentage > 35 ? 'Over Cap Pacing ⚠️' : 'Moderate Cut Needed';
+    } else {
+      dailyCutRequired = 0;
+      dailyCutPercentage = 0;
+      capStatusType = 'healthy';
+      capStatusText = 'On Track 💚';
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Financial Health Score Calculation (0 - 100)
+  // --------------------------------------------------------------------------
   let healthScore = 50;
   let statusClass = 'status-warning';
   let statusText = 'Fair / Modest';
@@ -973,7 +1096,9 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
     bannerText = `Aapne is mahine sirf <strong>${savingsRate.toFixed(1)}% (Rs. ${net.toLocaleString()})</strong> bachaya hai, jabke ideal bachat kam az kam <strong>20%</strong> honi chahiye. Chote kharche control karke savings barhayein.`;
   }
 
+  // --------------------------------------------------------------------------
   // Update Quick Metric Values
+  // --------------------------------------------------------------------------
   const elSavingsRate = document.getElementById('qmSavingsRate');
   if (elSavingsRate) {
     elSavingsRate.innerText = (savingsRate >= 0 ? '+' : '') + savingsRate.toFixed(1) + '%';
@@ -987,8 +1112,20 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
   }
 
   const elDailyCap = document.getElementById('qmDailyCap');
+  const elDailyCapHint = document.getElementById('qmDailyCapHint');
   if (elDailyCap) {
-    elDailyCap.innerText = totalIncome > 0 ? `Rs. ${dailyCap.toLocaleString()}` : 'Rs. 0';
+    elDailyCap.innerText = totalIncome > 0 ? `Rs. ${baseDailyCap.toLocaleString()}` : 'Rs. 0';
+  }
+  if (elDailyCapHint) {
+    if (totalIncome === 0) {
+      elDailyCapHint.innerText = 'Set income to calculate';
+      elDailyCapHint.style.color = 'var(--text-muted)';
+    } else if (dailyCutRequired > 0) {
+      elDailyCapHint.innerHTML = `<span style="color: #f43f5e; font-weight: 700;"><i class="fa-solid fa-scissors"></i> Cut Rs. ${dailyCutRequired.toLocaleString()}/day</span>`;
+    } else {
+      const todayLeft = Math.max(0, baseDailyCap - todayExpense);
+      elDailyCapHint.innerHTML = `<span style="color: #10b981; font-weight: 600;"><i class="fa-solid fa-circle-check"></i> On track (${todayLeft > 0 ? 'Rs. ' + todayLeft.toLocaleString() + ' left today' : 'Safe pace'})</span>`;
+    }
   }
 
   const elHealthScore = document.getElementById('qmHealthScore');
@@ -1020,7 +1157,213 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
     `;
   }
 
+  // --------------------------------------------------------------------------
+  // Update Dedicated Daily Cap & Spending Pace Box
+  // --------------------------------------------------------------------------
+  const capPill = document.getElementById('dailyCapStatusPill');
+  if (capPill) {
+    capPill.className = `daily-cap-status-pill status-${capStatusType}`;
+    let icon = 'fa-circle-check';
+    if (capStatusType === 'warning') icon = 'fa-triangle-exclamation';
+    if (capStatusType === 'danger') icon = 'fa-fire-flame-curved';
+    capPill.innerHTML = `<i class="fa-solid ${icon}"></i> ${capStatusText}`;
+  }
+
+  const elCapBase = document.getElementById('capStatBase');
+  if (elCapBase) elCapBase.innerText = totalIncome > 0 ? `Rs. ${baseDailyCap.toLocaleString()}` : 'Rs. 0';
+
+  const elCapToday = document.getElementById('capStatToday');
+  if (elCapToday) {
+    elCapToday.innerText = `Rs. ${todayExpense.toLocaleString()}`;
+    elCapToday.style.color = (baseDailyCap > 0 && todayExpense > baseDailyCap) ? 'var(--expense-color)' : 'var(--text-primary)';
+  }
+
+  const elCapTodaySub = document.getElementById('capStatTodaySub');
+  if (elCapTodaySub) {
+    if (baseDailyCap > 0 && todayExpense > baseDailyCap) {
+      elCapTodaySub.innerHTML = `<span style="color: #f43f5e; font-weight: 600;">+Rs. ${(todayExpense - baseDailyCap).toLocaleString()} over cap</span>`;
+    } else if (baseDailyCap > 0) {
+      elCapTodaySub.innerText = `Rs. ${(baseDailyCap - todayExpense).toLocaleString()} remaining today`;
+    } else {
+      elCapTodaySub.innerText = "Today's spend";
+    }
+  }
+
+  const elCapCut = document.getElementById('capStatCut');
+  if (elCapCut) {
+    elCapCut.innerText = dailyCutRequired > 0 ? `Rs. ${dailyCutRequired.toLocaleString()}` : 'Rs. 0';
+    elCapCut.style.color = dailyCutRequired > 0 ? 'var(--expense-color)' : 'var(--income-color)';
+  }
+
+  const elCapCutSub = document.getElementById('capStatCutSub');
+  if (elCapCutSub) {
+    elCapCutSub.innerText = dailyCutRequired > 0 ? `${dailyCutPercentage}% reduction needed` : 'No cut needed (Safe)';
+  }
+
+  const elCapAdjusted = document.getElementById('capStatAdjusted');
+  if (elCapAdjusted) {
+    elCapAdjusted.innerText = totalIncome > 0 ? `Rs. ${adjustedDailyCap.toLocaleString()} / day` : 'Rs. 0';
+    elCapAdjusted.style.color = adjustedDailyCap > 0 ? 'var(--income-color)' : 'var(--expense-color)';
+  }
+
+  const elCapAdjustedSub = document.getElementById('capStatAdjustedSub');
+  if (elCapAdjustedSub) {
+    elCapAdjustedSub.innerText = remainingDays > 0 ? `For next ${remainingDays} days` : 'Month ended';
+  }
+
+  // Progress Bars
+  const todayProgressPercent = baseDailyCap > 0 ? Math.min(100, Math.round((todayExpense / baseDailyCap) * 100)) : 0;
+  const elProgressTodayText = document.getElementById('capProgressTodayText');
+  if (elProgressTodayText) {
+    elProgressTodayText.innerText = `Rs. ${todayExpense.toLocaleString()} / Rs. ${baseDailyCap.toLocaleString()} limit`;
+  }
+  const elProgressTodayPercent = document.getElementById('capProgressTodayPercent');
+  if (elProgressTodayPercent) {
+    const rawTodayPct = baseDailyCap > 0 ? Math.round((todayExpense / baseDailyCap) * 100) : 0;
+    elProgressTodayPercent.innerText = `${rawTodayPct}%`;
+    elProgressTodayPercent.style.color = rawTodayPct > 100 ? 'var(--expense-color)' : (rawTodayPct > 80 ? '#f59e0b' : 'var(--income-color)');
+  }
+  const elProgressTodayFill = document.getElementById('capProgressTodayFill');
+  if (elProgressTodayFill) {
+    elProgressTodayFill.style.width = `${todayProgressPercent}%`;
+    elProgressTodayFill.className = `b-progress-fill ${todayExpense > baseDailyCap ? 'fill-wants' : 'fill-savings'}`;
+  }
+
+  // Month-to-Date Progress Bar
+  const monthProgressPercent = maxMonthlyBudget > 0 ? Math.min(100, Math.round((totalExpense / maxMonthlyBudget) * 100)) : 0;
+  const rawMonthPct = maxMonthlyBudget > 0 ? Math.round((totalExpense / maxMonthlyBudget) * 100) : 0;
+  const elProgressMonthText = document.getElementById('capProgressMonthText');
+  if (elProgressMonthText) {
+    elProgressMonthText.innerText = `Rs. ${totalExpense.toLocaleString()} spent of Rs. ${maxMonthlyBudget.toLocaleString()} max budget`;
+  }
+  const elProgressMonthPercent = document.getElementById('capProgressMonthPercent');
+  if (elProgressMonthPercent) {
+    elProgressMonthPercent.innerText = `${rawMonthPct}%`;
+    elProgressMonthPercent.style.color = rawMonthPct > 100 ? 'var(--expense-color)' : (rawMonthPct > 80 ? '#f59e0b' : 'var(--income-color)');
+  }
+  const elProgressMonthFill = document.getElementById('capProgressMonthFill');
+  if (elProgressMonthFill) {
+    elProgressMonthFill.style.width = `${monthProgressPercent}%`;
+    elProgressMonthFill.className = `b-progress-fill ${totalExpense > maxMonthlyBudget ? 'fill-wants' : 'fill-needs'}`;
+  }
+
+  // --------------------------------------------------------------------------
+  // Dynamic Roman Urdu & English Actionable Reduction Guidance
+  // --------------------------------------------------------------------------
+  let adviceHtml = '';
+  if (totalIncome === 0) {
+    adviceHtml = `
+      <div class="cap-advice-alert info">
+        <i class="fa-solid fa-circle-info"></i>
+        <div>
+          <strong>Income Record Karein</strong>
+          <p>Apna Daily Cap aur zaroori bachat targets dekhne ke liye pehle aamadni (Income) record karein. Is se aapka exact rozana limit calculate ho sakega.</p>
+        </div>
+      </div>
+    `;
+  } else if (isPastMonth) {
+    adviceHtml = `
+      <div class="cap-advice-alert ${totalExpense > maxMonthlyBudget ? 'danger' : 'healthy'}">
+        <i class="fa-solid ${totalExpense > maxMonthlyBudget ? 'fa-triangle-exclamation' : 'fa-circle-check'}"></i>
+        <div>
+          <strong>${formatMonthLabel(activeMonthKey)} Ka Final Summary</strong>
+          <p>Is mahine aapka base daily cap <strong>Rs. ${baseDailyCap.toLocaleString()} / din</strong> tha. Kul kharcha <strong>Rs. ${totalExpense.toLocaleString()}</strong> raha (Rozana average: <strong>Rs. ${Math.round(totalExpense / daysInMonth).toLocaleString()} / din</strong>). ${totalExpense > maxMonthlyBudget ? 'Yeh mahina budget cap se ziada par close hua.' : 'Masha\'Allah! Yeh mahina daily cap aur safe budget ke andar kamyabi se close hua.'}</p>
+        </div>
+      </div>
+    `;
+  } else if (remainingBudget <= 0) {
+    const deficitAmount = Math.abs(remainingBudget);
+    adviceHtml = `
+      <div class="cap-advice-alert danger">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <div>
+          <strong>🚨 Mahine Ka Kul Expense Budget Exceed Ho Gaya Hai!</strong>
+          <p style="margin-bottom: 8px;">Aapka is mahine ka 80% expense limit (<strong>Rs. ${maxMonthlyBudget.toLocaleString()}</strong>) poora khatam ho chuka hai aur aap <strong>Rs. ${deficitAmount.toLocaleString()}</strong> overspend kar chuke hain.</p>
+          <div class="cap-steps-list">
+            <div class="cap-step-item">
+              <span class="step-num">1</span>
+              <span><strong>100% Non-Essential Spending Freeze:</strong> Mahine ke baqi <strong>${remainingDays}</strong> dino mein dining out, online shopping aur ghair zaroori purchases par mukammal stop lagayein.</span>
+            </div>
+            <div class="cap-step-item">
+              <span class="step-num">2</span>
+              <span><strong>Naya Rozana Spending Target:</strong> Ab se rozana kharcha <strong>Rs. 0 / din</strong> (sirf zaroori survival kharche) hona chahiye taake mazeed deficit na barhe.</span>
+            </div>
+            <div class="cap-step-item">
+              <span class="step-num">3</span>
+              <span><strong>Recovery Target:</strong> Agle mahine ki pehli salary se Rs. ${deficitAmount.toLocaleString()} bachat mein daal kar yeh deficit recover karein.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (dailyCutRequired > 0) {
+    const todayOver = (baseDailyCap > 0 && todayExpense > baseDailyCap) ? todayExpense - baseDailyCap : 0;
+    adviceHtml = `
+      <div class="cap-advice-alert warning">
+        <i class="fa-solid fa-chart-line-down"></i>
+        <div>
+          <strong>⚠️ Daily Cap Pura Karne Ke Liye Kharcha Kam Karne Ki Guidance:</strong>
+          <p style="margin-bottom: 8px;">
+            Aapka kharcha ab tak ke expected cap (Rs. ${expectedSpendToDate.toLocaleString()}) se <strong>Rs. ${paceDifference.toLocaleString()}</strong> aage chal raha hai. Mahine ke bache hue <strong>${remainingDays}</strong> dino ke liye aapke paas <strong>Rs. ${remainingBudget.toLocaleString()}</strong> bache hain.
+          </p>
+          <div class="cap-steps-list">
+            <div class="cap-step-item">
+              <span class="step-num">1</span>
+              <span><strong>Rozana Kharch Kami (Daily Reduction):</strong> Cap pura karne aur 20% bachat target bachane ke liye ab rozana apne kharche mein <strong>Rs. ${dailyCutRequired.toLocaleString()} (${dailyCutPercentage}%)</strong> ki kami karein.</span>
+            </div>
+            <div class="cap-step-item">
+              <span class="step-num">2</span>
+              <span><strong>Naya Rozana Spending Limit:</strong> Bajaye purane Rs. ${baseDailyCap.toLocaleString()} ke, ab aapka naya daily limit <strong>Rs. ${adjustedDailyCap.toLocaleString()} / din</strong> hona chahiye.</span>
+            </div>
+            ${todayOver > 0 ? `
+            <div class="cap-step-item">
+              <span class="step-num">3</span>
+              <span><strong>Aaj Ka Overspend Recovery:</strong> Aaj aapne Rs. ${todayExpense.toLocaleString()} kharch kiye (Rs. ${todayOver.toLocaleString()} over cap). Kal ka kharcha sirf <strong>Rs. ${Math.max(0, adjustedDailyCap - todayOver).toLocaleString()}</strong> tak rakhein taake aaj ka extra kharcha kal hi balance ho jaye!</span>
+            </div>` : `
+            <div class="cap-step-item">
+              <span class="step-num">3</span>
+              <span><strong>Aaj Ka Status:</strong> Aaj aapne Rs. ${todayExpense.toLocaleString()} kharch kiye hain. Din ke bache hue hissay mein koshish karein ke Rs. ${Math.max(0, adjustedDailyCap - todayExpense).toLocaleString()} se ziada kharch na ho.</span>
+            </div>`}
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    adviceHtml = `
+      <div class="cap-advice-alert healthy">
+        <i class="fa-solid fa-circle-check"></i>
+        <div>
+          <strong>🌟 Zabardast Control! Aapka Kharcha Daily Cap Ke Andar Hai:</strong>
+          <p style="margin-bottom: 8px;">
+            Masha'Allah! Aap rozana daily cap (Rs. ${baseDailyCap.toLocaleString()} / din) ke andar disciplined tareeqe se kharch kar rahe hain. Mahine ke baqi <strong>${remainingDays}</strong> dino ke liye aapke paas <strong>Rs. ${remainingBudget.toLocaleString()}</strong> ka safe budget maujood hai.
+          </p>
+          <div class="cap-steps-list">
+            <div class="cap-step-item">
+              <span class="step-num">✓</span>
+              <span><strong>Kami Ki Zaroorat Nahi:</strong> Filhal aapko kharcha kam karne ki zaroorat nahi hai. Aap safe zone mein hain.</span>
+            </div>
+            <div class="cap-step-item">
+              <span class="step-num">✓</span>
+              <span><strong>Safe Daily Limit:</strong> Agle ${remainingDays} din aap rozana <strong>Rs. ${adjustedDailyCap.toLocaleString()} / din</strong> tak araam se kharch kar sakte hain aur phir bhi 20% bachat secure rahegi.</span>
+            </div>
+            <div class="cap-step-item">
+              <span class="step-num">✓</span>
+              <span><strong>Aaj Ka Status:</strong> Aaj aapne <strong>Rs. ${todayExpense.toLocaleString()}</strong> kharch kiye hain (Gunjayish baqi: <strong>Rs. ${Math.max(0, baseDailyCap - todayExpense).toLocaleString()}</strong>).</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const elAdviceBox = document.getElementById('dailyCapAdviceBox');
+  if (elAdviceBox) {
+    elAdviceBox.innerHTML = adviceHtml;
+  }
+
+  // --------------------------------------------------------------------------
   // Update 50/30/20 Ideal Budget Guide
+  // --------------------------------------------------------------------------
   const elIncomeDisplay = document.getElementById('guideIncomeDisplay');
   if (elIncomeDisplay) {
     elIncomeDisplay.innerText = `Rs. ${totalIncome.toLocaleString()}`;
@@ -1039,7 +1382,9 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
   const elSavingsVal = document.getElementById('guideSavingsVal');
   if (elSavingsVal) elSavingsVal.innerText = `Rs. ${savingsTarget.toLocaleString()}`;
 
-  // Populate Dynamic Actionable Tips List
+  // --------------------------------------------------------------------------
+  // Populate Dynamic Actionable Tips List (Updated with dynamic Cap Reduction)
+  // --------------------------------------------------------------------------
   const tipsList = document.getElementById('advisorTipsList');
   if (tipsList) {
     const tips = [];
@@ -1061,9 +1406,9 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
         desc: `Kisi bhi aisi cheez par jo foran zaroori na ho, khareedne se pehle 72 ghante intezar karein. Ziada tar shauq 3 din baad khatam ho jata hai aur paise bach jate hain.`
       });
       tips.push({
-        icon: 'fa-calendar-check',
-        title: `4. Daily Micro-Budget (Rs. ${dailyCap > 0 ? dailyCap.toLocaleString() : '1,000'} / Day Limit)`,
-        desc: `Apne rozana ke kharchon ke liye had muqarrar karein. Agar kisi din ziada kharch ho jaye toh agle 2 din kharche kam karke budget balance karein.`
+        icon: 'fa-scissors',
+        title: `4. Daily Cap Deficit Cut (Rozana Rs. ${dailyCutRequired > 0 ? dailyCutRequired.toLocaleString() : '1,000'} Kami)`,
+        desc: `Deficit khatam karne ke liye mahine ke bache hue ${remainingDays} dino mein rozana kharche ko Rs. ${adjustedDailyCap.toLocaleString()} tak mehdood karein.`
       });
     } else if (savingsRate < 20) {
       tips.push({
@@ -1081,11 +1426,19 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
         title: '3. Food & Dining Out Optimization',
         desc: `Tea, snacks, cafe visits aur food delivery ke chote chote kharche mahine ke aakhir mein hazaron ban jate hain. Ghar ke khane ko tarjeeh dein.`
       });
-      tips.push({
-        icon: 'fa-wallet',
-        title: `4. Daily Spending Target: Rs. ${dailyCap.toLocaleString()} / Day`,
-        desc: `Agle mahine rozana ke kharche ko is had ke andar rakhne ki koshish karein taake month-end par Rs. ${savingsTarget.toLocaleString()} ka safe buffer bache.`
-      });
+      if (dailyCutRequired > 0) {
+        tips.push({
+          icon: 'fa-scissors',
+          title: `4. Rozana Kharch Kami: Rs. ${dailyCutRequired.toLocaleString()} / Day Cut`,
+          desc: `Daily cap pura karne ke liye agle ${remainingDays} dino mein rozana Rs. ${dailyCutRequired.toLocaleString()} (${dailyCutPercentage}%) kharcha kam karein (Naya target: Rs. ${adjustedDailyCap.toLocaleString()}/day).`
+        });
+      } else {
+        tips.push({
+          icon: 'fa-wallet',
+          title: `4. Daily Spending Target: Rs. ${adjustedDailyCap > 0 ? adjustedDailyCap.toLocaleString() : baseDailyCap.toLocaleString()} / Day`,
+          desc: `Rozana ke kharche ko is had ke andar rakhne ki koshish karein taake month-end par Rs. ${savingsTarget.toLocaleString()} ka safe buffer bache.`
+        });
+      }
     } else {
       tips.push({
         icon: 'fa-trophy',
@@ -1101,6 +1454,11 @@ function updateAdvisorView(totalIncome, totalExpense, net, monthTransactions) {
         icon: 'fa-arrow-trend-up',
         title: '3. Avoid Lifestyle Creep',
         desc: `Aamadni barhne ke sath sath standards barhana aam baat hai, lekin apne fixed expenses ko hamesha 50% se kam rakhein.`
+      });
+      tips.push({
+        icon: 'fa-circle-check',
+        title: `4. Safe Daily Limit: Rs. ${adjustedDailyCap > 0 ? adjustedDailyCap.toLocaleString() : baseDailyCap.toLocaleString()} / Day`,
+        desc: `Aapka spending pace control mein hai. Agle ${remainingDays} din rozana is had ke andar rehte hue araam se kharch kar sakte hain.`
       });
     }
 
@@ -1210,7 +1568,20 @@ function exportTransactionsToExcel() {
   const needsBudget = Math.round(totalIncome * 0.5);
   const wantsBudget = Math.round(totalIncome * 0.3);
   const savingsBudget = Math.round(totalIncome * 0.2);
-  const dailyCap = Math.max(0, Math.floor((totalIncome * 0.8) / 30));
+  const maxMonthlyBudget = Math.round(totalIncome * 0.8);
+
+  const now = new Date();
+  let daysInMonth = 30;
+  if (activeMonthKey !== 'ALL' && activeMonthKey.includes('-')) {
+    const [yStr, mStr] = activeMonthKey.split('-');
+    daysInMonth = new Date(parseInt(yStr, 10), parseInt(mStr, 10), 0).getDate();
+  }
+  const baseDailyCap = totalIncome > 0 ? Math.max(0, Math.floor(maxMonthlyBudget / daysInMonth)) : 0;
+  const daysPassed = Math.min(daysInMonth, Math.max(1, now.getDate()));
+  const remainingDays = Math.max(1, daysInMonth - daysPassed + 1);
+  const remainingBudget = maxMonthlyBudget - totalExpense;
+  const adjustedDailyCap = remainingBudget > 0 ? Math.floor(remainingBudget / remainingDays) : 0;
+  const dailyCut = Math.max(0, baseDailyCap - adjustedDailyCap);
 
   const sheet2Data = [
     ["SMARTFLOW - MONTH-END SAVINGS & BUDGET ADVISOR"],
@@ -1222,13 +1593,15 @@ function exportTransactionsToExcel() {
     ["Wants (Lifestyle)", "30% max", wantsBudget, "Dining out, entertainment, shopping, subscriptions"],
     ["Savings (Future)", "20% min", savingsBudget, "Emergency reserve, investments, wealth accumulation"],
     [""],
-    ["2. DAILY BUDGET GUIDELINES"],
-    ["Suggested Daily Spend Cap:", `Rs. ${dailyCap.toLocaleString()} / day`, "(To ensure at least 20% savings target is met)"],
+    ["2. DAILY BUDGET & SPENDING PACING GUIDELINES"],
+    ["Base Daily Spend Cap:", `Rs. ${baseDailyCap.toLocaleString()} / day`, "(Safe allowance to maintain 20% savings)"],
+    ["Current Daily Pace Status:", dailyCut > 0 ? `Over Cap Pace: Cut Rs. ${dailyCut.toLocaleString()} / day needed` : "Within Cap: Spending pace is safe", ""],
+    ["Adjusted Daily Cap for Remaining Days:", `Rs. ${adjustedDailyCap.toLocaleString()} / day`, `(${remainingDays} days remaining to balance budget)`],
     [""],
     ["3. ACTIONABLE MONEY-SAVING RULES & ADVICE"],
     ["Rule 1: Pay Yourself First", `Salary aate hi foran kam az kam 20% (Rs. ${savingsBudget.toLocaleString()}) alag account mein transfer karein.`],
     ["Rule 2: 72-Hour Rule", "Ghair zaroori impulse purchase karne se pehle 72 ghante intezar karein."],
-    ["Rule 3: Fixed Outflow Review", "Fixed recurring expenses (subscriptions, rent, bills) ko regular review karein."],
+    ["Rule 3: Daily Cap Discipline", dailyCut > 0 ? `Cap pura karne ke liye rozana Rs. ${dailyCut.toLocaleString()} kami karein taake month-end balance ho sake.` : "Apne rozana kharche ko daily cap ke andar rakhein."],
     ["Rule 4: Emergency Fund", `Kam az kam 3 mahine ke kharchon (Rs. ${(totalExpense * 3).toLocaleString()}) ka emergency buffer maintain karein.`]
   ];
 
